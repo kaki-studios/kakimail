@@ -10,6 +10,7 @@ A simple and portable SMTP server, written in pure Rust (🚀🚀🚀). Anyone c
 
 - [ ] SMTP state machine that handles incoming requests (as per [edgemail](https://github.com/psarna/edgemail/tree/master))
 - [ ] Ability to send messages (unlike edgemail)
+- [ ] copy some stuff from [here](https://github.com/stalwartlabs/mail-server)
 
 ### Not going to be implemented:
 - User auth (this is a personal project, meant to be used just by one person)
