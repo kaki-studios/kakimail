@@ -1,6 +1,6 @@
 # kakimail
 
-A simple and portable SMTP server, written in pure Rust (:rocket::rocket::rocket:). Anyone can self-host this server and use it as their own.
+A simple and portable SMTP server, written in pure Rust (🚀🚀🚀). Anyone can self-host this server and use it as their own.
 
 ## Features:
 
