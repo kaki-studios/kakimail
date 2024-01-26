@@ -1,3 +1,3 @@
 pub struct Client {
-    db: GenericClient,
+    //db: somedatabaseclient,
 }
