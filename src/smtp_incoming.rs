@@ -1,5 +1,9 @@
+use std::sync::Arc;
+
 use anyhow::*;
-use tokio::net::*;
+use tokio::{net::*, sync::Mutex};
+
+use crate::database;
 
 enum State {
     Fresh,
@@ -18,4 +22,10 @@ pub struct Mail {
 struct StateMachine {
     state: State,
     ehlo_greeting: String,
+}
+
+pub struct SmtpIncoming {
+    stream: tokio::net::TcpStream,
+    state_machine: StateMachine,
+    db: Arc<Mutex<database::Client>>,
 }

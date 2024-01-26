@@ -1,6 +1,7 @@
 use anyhow::*;
 use tokio::net::TcpListener;
 
+mod database;
 mod smtp_incoming;
 mod smtp_outgoing;
 mod utils;
