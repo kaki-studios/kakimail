@@ -7,7 +7,12 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.79"
+chrono = "0.4.33"
 hickory-resolver = "0.24.0"
+# libsql-client = "0.33.4"
+
+libsql-client = { version = "0.24.3", default-features = false, features = ["local_backend", "reqwest_backend"] }
+# libsql-client = { version = "0.33.4", default-features = false, features = ["local_backend", "reqwest_backend"] }
 tokio = { version = "1.35.1", features = ["full"] }
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"

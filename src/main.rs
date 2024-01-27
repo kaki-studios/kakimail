@@ -1,5 +1,6 @@
 use anyhow::*;
-use tokio::net::TcpListener;
+use core::result::Result::Ok;
+use tokio::net::{TcpListener, TcpStream};
 
 mod database;
 mod smtp_incoming;
@@ -9,19 +10,39 @@ mod utils;
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
-    //NB cant use 25 since its blocked probably by isp???
-    let smtp_addr = "127.0.0.1:2525";
-    //NB ec2 instance not set up yet, will not work!
-    let _domain = "mail.kaki.foo";
 
-    let smtp_listener = TcpListener::bind(&smtp_addr).await?;
+    let smtp_addr = std::env::args().nth(1).unwrap_or("127.0.0.1".to_string());
+
+    let domain = &std::env::args()
+        .nth(2)
+        .unwrap_or("smtp.kaki.foo".to_string());
+
+    let incoming_listener = TcpListener::bind(format!("{smtp_addr}:2525")).await?;
+    //errors on local machine
+    let outgoing_listener = TcpListener::bind(format!("{smtp_addr}:587")).await?;
     tracing::info!("listening on: {}", smtp_addr);
     let resolver = utils::DnsResolver::default_new();
+    tracing::info!("smtp server for {domain} started!");
 
     let _ip = resolver.resolve_mx("gmail.com").await?;
     //main server loop
     loop {
-        let (_stream, addr) = smtp_listener.accept().await?;
-        tracing::info!("recieved new connection from {:?}", addr);
+        tokio::select! {
+            Ok((incoming_stream, incoming_addr)) = incoming_listener.accept() => {
+                tracing::info!("recieved incoming connection from {}", incoming_addr);
+                tokio::task::LocalSet::new()
+                    .run_until(async move {
+                        let smtp = smtp_incoming::IncomingServer::new(domain, incoming_stream).await?;
+                        smtp.serve().await
+                    })
+                    .await
+                    .ok();
+            }
+            Ok((outgoing_stream, outgoing_addr)) = outgoing_listener.accept() => {
+                tracing::info!("recieved outgoing connection from {}", outgoing_addr);
+                tracing::error!("no outgoing functionality yet");
+
+            }
+        }
     }
 }
