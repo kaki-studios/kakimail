@@ -17,8 +17,7 @@ async fn main() -> Result<()> {
         .nth(2)
         .unwrap_or("smtp.kaki.foo".to_string());
 
-    let incoming_listener = TcpListener::bind(format!("{smtp_addr}:2525")).await?;
-    //errors on local machine
+    let incoming_listener = TcpListener::bind(format!("{smtp_addr}:25")).await?;
     let outgoing_listener = TcpListener::bind(format!("{smtp_addr}:587")).await?;
     tracing::info!("listening on: {}", smtp_addr);
     let resolver = utils::DnsResolver::default_new();
