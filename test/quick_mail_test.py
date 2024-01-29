@@ -4,7 +4,7 @@ import smtplib
 import sys
 
 from_addr = "testfrom@example.com"
-to_addr = "testto@example.com"
+to_addr = "testto@kaki.foo"
 
 # Add the From: and To: headers at the start!
 msg = f"From: {from_addr}\r\nTo: {to_addr}\r\n\r\n"

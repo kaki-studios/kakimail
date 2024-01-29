@@ -9,5 +9,7 @@ RUN cargo build --release
 
 #inter-container communication or something idk
 EXPOSE 8080
+#just testing
+EXPOSE 25
 
 ENTRYPOINT ./target/release/kakimail "0.0.0.0"
