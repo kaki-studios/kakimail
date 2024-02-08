@@ -1,6 +1,6 @@
 use anyhow::*;
 use core::result::Result::Ok;
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 
 mod database;
 mod smtp_incoming;
@@ -20,10 +20,11 @@ async fn main() -> Result<()> {
     let incoming_listener = TcpListener::bind(format!("{smtp_addr}:25")).await?;
     let outgoing_listener = TcpListener::bind(format!("{smtp_addr}:587")).await?;
     tracing::info!("listening on: {}", smtp_addr);
-    let resolver = utils::DnsResolver::default_new();
     tracing::info!("smtp server for {domain} started!");
 
-    let _ip = resolver.resolve_mx("gmail.com").await?;
+    // let resolver = utils::DnsResolver::default_new();
+    // let _ip = resolver.resolve_mx("gmail.com").await?;
+
     //main server loop
     loop {
         tokio::select! {
@@ -39,7 +40,13 @@ async fn main() -> Result<()> {
             }
             Ok((outgoing_stream, outgoing_addr)) = outgoing_listener.accept() => {
                 tracing::info!("recieved outgoing connection from {}", outgoing_addr);
-                tracing::error!("no outgoing functionality yet");
+                tokio::task::LocalSet::new()
+                    .run_until(async move {
+                        let smtp = smtp_incoming::IncomingServer::new(domain, outgoing_stream).await?;
+                        smtp.serve().await
+                    })
+                    .await
+                    .ok();
 
             }
         }

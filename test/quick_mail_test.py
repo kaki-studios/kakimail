@@ -8,7 +8,7 @@ to_addr = "testto@kaki.foo"
 
 # Add the From: and To: headers at the start!
 msg = f"From: {from_addr}\r\nTo: {to_addr}\r\n\r\n"
-msg += "test \nmail\n goodbye\n"
+msg += "test \nmail\n goodbye\n from kaarlo\n"
 
 if len(sys.argv) < 3:
     print(f"Usage: {sys.argv[0]} HOST PORT")

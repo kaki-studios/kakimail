@@ -1,10 +1,10 @@
 # to-do list of features that need to be implemented
 
-- proper dockerfile and deployment
-- email receiving
-- email sending
-- database or file-based storage (database better)
-- testing
+- [X] proper dockerfile and deployment
+- [X] email receiving
+- [ ] email sending
+- [ ] proper database or file-based storage (database better)
+- [ ] testing
 
 
 other stuff?? add here!

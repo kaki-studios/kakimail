@@ -1,4 +1,4 @@
-use crate::smtp_incoming::Mail;
+use crate::utils::Mail;
 use anyhow::{Context, Result};
 use libsql_client::{client::GenericClient, DatabaseClient, Statement};
 
@@ -44,6 +44,7 @@ impl Client {
     }
 
     /// Cleans up old mail
+    #[allow(unused)]
     pub async fn delete_old_mail(&self) -> Result<()> {
         let now = chrono::offset::Utc::now();
         let a_week_ago = now - chrono::Duration::days(7);

@@ -7,6 +7,7 @@ use tokio::{
 };
 
 use crate::database;
+use crate::utils::Mail;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum State {
@@ -17,14 +18,7 @@ enum State {
     Received(Mail),
 }
 
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
-pub struct Mail {
-    pub from: String,
-    pub to: Vec<String>,
-    pub data: String,
-}
-
-struct StateMachine {
+pub struct StateMachine {
     state: State,
     ehlo_greeting: String,
 }
@@ -138,7 +132,11 @@ impl StateMachine {
                 } else {
                     StateMachine::HOLD_YOUR_HORSES
                 };
-                mail.data += raw_msg;
+                //this is called "dot-stuffing", see: https://en.wikipedia.org/wiki/Simple_Mail_Transfer_Protocol#SMTP_transport_example
+                mail.data += &raw_msg
+                    .lines()
+                    .map(|line| if line == ".." { "." } else { line })
+                    .collect::<String>();
                 self.state = State::ReceivingData(mail);
                 Ok(resp)
             }
