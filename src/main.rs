@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
                 tracing::info!("recieved incoming connection from {}", incoming_addr);
                 tokio::task::LocalSet::new()
                     .run_until(async move {
-                        let smtp = smtp_incoming::IncomingServer::new(domain, incoming_stream).await?;
+                        let smtp = smtp_incoming::SmtpIncoming::new(domain, incoming_stream).await?;
                         smtp.serve().await
                     })
                     .await
@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
                 tracing::info!("recieved outgoing connection from {}", outgoing_addr);
                 tokio::task::LocalSet::new()
                     .run_until(async move {
-                        let smtp = smtp_incoming::IncomingServer::new(domain, outgoing_stream).await?;
+                        let smtp = smtp_outgoing::SmtpOutgoing::new(domain, outgoing_stream).await?;
                         smtp.serve().await
                     })
                     .await

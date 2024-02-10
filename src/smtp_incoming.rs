@@ -23,7 +23,7 @@ pub struct StateMachine {
     ehlo_greeting: String,
 }
 
-pub struct IncomingServer {
+pub struct SmtpIncoming {
     pub stream: tokio::net::TcpStream,
     pub state_machine: StateMachine,
     pub db: Arc<Mutex<database::Client>>,
@@ -156,7 +156,7 @@ impl StateMachine {
     }
 }
 
-impl IncomingServer {
+impl SmtpIncoming {
     /// Creates a new server from a connected stream
     pub async fn new(domain: impl AsRef<str>, stream: tokio::net::TcpStream) -> Result<Self> {
         Ok(Self {
