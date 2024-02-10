@@ -133,6 +133,9 @@ impl StateMachine {
                     StateMachine::HOLD_YOUR_HORSES
                 };
                 //this is called "dot-stuffing", see: https://en.wikipedia.org/wiki/Simple_Mail_Transfer_Protocol#SMTP_transport_example
+                //basically when the mail contains <CR><LF>.<CR><LF>, the MUA will actually send <CR><LF>..<CR><LF>
+                //because <CR><LF>.<CR><LF> is the EOF for mail. We need to revert it back to <CR><LF>.<CR><LF> so
+                //that it will look correct
                 mail.data += &raw_msg
                     .lines()
                     .map(|line| if line == ".." { "." } else { line })

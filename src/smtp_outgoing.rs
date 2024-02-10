@@ -37,9 +37,11 @@ impl SmtpOutgoing {
             if n == 0 {
                 //quit
                 tracing::info!("should quit on port 587");
+                break;
             }
             let msg = std::str::from_utf8(&buf[0..n])?;
             tracing::info!("recieved traffic on port 587: {:?}", msg);
         }
+        Ok(())
     }
 }
