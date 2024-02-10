@@ -4,12 +4,6 @@ use hickory_resolver::{
     name_server::{GenericConnector, TokioRuntimeProvider},
 };
 
-#[derive(Default, Clone, Debug, PartialEq, Eq)]
-pub struct Mail {
-    pub from: String,
-    pub to: Vec<String>,
-    pub data: String,
-}
 ///a struct used to resolve dns so that given a domain, we can find its ip
 pub struct DnsResolver {
     pub resolver: hickory_resolver::AsyncResolver<GenericConnector<TokioRuntimeProvider>>,

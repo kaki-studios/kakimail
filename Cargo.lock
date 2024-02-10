@@ -561,6 +561,7 @@ name = "kakimail"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64",
  "chrono",
  "hickory-resolver",
  "libsql-client",

@@ -1,4 +1,4 @@
-use crate::utils::Mail;
+use crate::smtp_common::Mail;
 use anyhow::{Context, Result};
 use libsql_client::{client::GenericClient, DatabaseClient, Statement};
 
