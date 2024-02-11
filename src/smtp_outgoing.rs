@@ -55,6 +55,7 @@ impl SmtpOutgoing {
                 break;
             }
         }
+        //TODO: require auth with mail submission (do the logic in ./smtp_common.rs)
         match self.state_machine.state {
             State::Received(mail) => {
                 tracing::info!("{:?}", mail);
@@ -67,6 +68,8 @@ impl SmtpOutgoing {
                         let resolver = utils::DnsResolver::default_new();
                         let ip = resolver.resolve_mx(domain).await?;
                         tracing::info!("supposed to send email to: {:?}", ip);
+                        //TODO: establish connection on port 25 and send the appropriate smtp
+                        //commands (maybe need a new state_machine???)
                     }
                 }
             }
