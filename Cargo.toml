@@ -9,6 +9,7 @@ edition = "2021"
 anyhow = "1.0.79"
 base64 = "0.21.7"
 chrono = "0.4.33"
+dotenv = "0.15.0"
 hickory-resolver = "0.24.0"
 # libsql-client = "0.33.4"
 

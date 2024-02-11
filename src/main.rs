@@ -1,5 +1,6 @@
 use anyhow::*;
 use core::result::Result::Ok;
+use dotenv::dotenv;
 use tokio::net::TcpListener;
 use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
@@ -12,6 +13,8 @@ mod utils;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // dotenv().ok();
+    dotenv()?;
     tracing_subscriber::registry().with(fmt::layer()).init();
     // tracing_subscriber::fmt::init();
 

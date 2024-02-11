@@ -79,7 +79,13 @@ impl StateMachine {
                 );
                 let decoded = engine.decode(auth).context("should be valid base64")?;
                 let login = std::str::from_utf8(&decoded[0..])?;
-                if login == "\0kaki\0nomatter" {
+                if login
+                    == format!(
+                        "\0{}\0{}",
+                        std::env::var("USERNAME")?,
+                        std::env::var("PASSWORD")?
+                    )
+                {
                     tracing::info!("success!, logged in!");
                     self.state = State::Greeted;
                     return Ok(StateMachine::AUTH_OK);
