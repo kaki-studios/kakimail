@@ -2,6 +2,8 @@ use anyhow::*;
 use core::result::Result::Ok;
 use dotenv::dotenv;
 use tokio::net::TcpListener;
+use tracing::Level;
+use tracing_subscriber::filter;
 use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
 
@@ -15,7 +17,9 @@ mod utils;
 async fn main() -> Result<()> {
     // dotenv().ok();
     dotenv()?;
-    tracing_subscriber::registry().with(fmt::layer()).init();
+    tracing_subscriber::registry()
+        .with(fmt::layer().with_filter(filter::LevelFilter::from_level(Level::INFO)))
+        .init();
     // tracing_subscriber::fmt::init();
 
     let smtp_addr = std::env::args().nth(1).unwrap_or("127.0.0.1".to_string());
@@ -39,7 +43,7 @@ async fn main() -> Result<()> {
     loop {
         tokio::select! {
             Ok((incoming_stream, incoming_addr)) = incoming_listener.accept() => {
-                tracing::info!("recieved incoming connection from {}", incoming_addr);
+                tracing::debug!("recieved incoming connection from {}", incoming_addr);
                 tokio::task::LocalSet::new()
                     .run_until(async move {
                         let smtp = smtp_incoming::SmtpIncoming::new(domain, incoming_stream).await?;
@@ -49,7 +53,7 @@ async fn main() -> Result<()> {
                     .ok();
             }
             Ok((outgoing_stream, outgoing_addr)) = outgoing_listener.accept() => {
-                tracing::info!("recieved outgoing connection from {}", outgoing_addr);
+                tracing::debug!("recieved outgoing connection from {}", outgoing_addr);
                 tokio::task::LocalSet::new()
                     .run_until(async move {
                         let smtp = smtp_outgoing::SmtpOutgoing::new(domain, outgoing_stream).await?;
@@ -57,7 +61,6 @@ async fn main() -> Result<()> {
                     })
                     .await
                     .ok();
-
             }
         }
     }
