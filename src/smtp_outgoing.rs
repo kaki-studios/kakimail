@@ -5,6 +5,7 @@ use crate::smtp_common::State;
 use crate::smtp_common::StateMachine;
 use crate::utils;
 use anyhow::Result;
+use tokio::net::TcpStream;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     // sync::Mutex,
@@ -53,20 +54,10 @@ impl SmtpOutgoing {
                 break;
             }
         }
-        //TODO: require auth with mail submission (do the logic in ./smtp_common.rs)
         match self.state_machine.state {
             State::Received(mail) => {
-                for rcpt in mail.to {
-                    if let Some((_, domain)) = rcpt.split_once("@") {
-                        let domain = domain
-                            .strip_suffix(">")
-                            .expect("emails to be formatted inside angle brackets"); //hacky
-                        let resolver = utils::DnsResolver::default_new();
-                        let ip = resolver.resolve_mx(domain).await?;
-                        //TODO: establish connection on port 25 and send the appropriate smtp
-                        //commands (maybe need a new state_machine???)
-                    }
-                }
+                //send mail, everything was succesful!
+                SmtpOutgoing::send_mail(mail).await?;
             }
             State::ReceivingData(mail) => {
                 tracing::info!("Received EOF before receiving QUIT");
@@ -82,5 +73,34 @@ impl SmtpOutgoing {
             .write_all(StateMachine::OH_HAI)
             .await
             .map_err(|e| e.into())
+    }
+    async fn send_mail(mail: crate::smtp_common::Mail) -> Result<()> {
+        tracing::debug!("HEEERE");
+        let resolver = utils::DnsResolver::default_new();
+        for rcpt in mail.to {
+            if let Some((_, domain)) = rcpt.split_once("@") {
+                let domain = domain
+                    .strip_suffix(">") //NOTE: hacky
+                    .expect("emails to be formatted inside angle brackets"); //hacky
+                let ip = resolver.resolve_mx(domain).await?;
+                tracing::info!("{:?}", ip);
+                //TODO: establish connection on port 25 and send the appropriate smtp
+                //commands (maybe need a new state_machine???)
+                //BIG NOTE: this will time out work unless you request to unblock port 25
+                let mut connection = TcpStream::connect(format!("{}:25", ip.to_string()))
+                    .await
+                    .map_err(|r| {
+                        tracing::error!("err! is {:?}", r);
+                        r
+                    })?;
+                let mut buf = vec![0; 65536];
+                let n = connection.read(&mut buf).await?;
+                tracing::debug!("{:?}", &buf[..n]);
+                connection.write_all(b"HELO smtp.kaki.foo").await?;
+                let n = connection.read(&mut buf).await?;
+                tracing::debug!("{:?}", &buf[..n]);
+            }
+        }
+        Ok(())
     }
 }
