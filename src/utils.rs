@@ -1,12 +1,9 @@
 use anyhow::{anyhow, Result};
-use hickory_resolver::{
-    config::{ResolverConfig, ResolverOpts},
-    name_server::{GenericConnector, TokioRuntimeProvider},
-};
+use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 
 ///a struct used to resolve dns so that given a domain, we can find its ip
 pub struct DnsResolver {
-    pub resolver: hickory_resolver::AsyncResolver<GenericConnector<TokioRuntimeProvider>>,
+    pub resolver: hickory_resolver::TokioAsyncResolver,
 }
 
 impl DnsResolver {
@@ -15,7 +12,8 @@ impl DnsResolver {
         //FIXME: dirty code
         //lookup returns a list of records it maps to
         let lookup = self.resolver.mx_lookup(domain.to_owned() + ".").await?;
-        //apparently lowest number is highest preference
+        //apparently lowest number is highest preference, this is why it's sometimes called
+        //"distance"
         let min = lookup
             .iter()
             .min_by_key(|k| k.preference())
@@ -33,13 +31,12 @@ impl DnsResolver {
             .ok_or(anyhow!("no data found"))?
             .ip_addr()
             .ok_or(anyhow!("could not construct ip address"))?;
-        tracing::info!("mx lookup succesful for {}, ip is {:?}", domain, ip);
         return Ok(ip);
     }
     ///default resolver for tokio
     pub fn default_new() -> Self {
         Self {
-            resolver: hickory_resolver::AsyncResolver::tokio(
+            resolver: hickory_resolver::TokioAsyncResolver::tokio(
                 ResolverConfig::default(),
                 ResolverOpts::default(),
             ),

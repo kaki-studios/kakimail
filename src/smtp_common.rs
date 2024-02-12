@@ -2,6 +2,7 @@ use anyhow::Context;
 use anyhow::Result;
 use base64::Engine;
 
+//naïve
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct Mail {
     pub from: String,
@@ -12,6 +13,7 @@ pub struct Mail {
 pub enum State {
     Fresh,
     Greeted,
+    Authed,
     ReceivingRcpt(Mail),
     ReceivingData(Mail),
     Received(Mail),
@@ -20,6 +22,7 @@ pub enum State {
 pub struct StateMachine {
     pub state: State,
     pub ehlo_greeting: String,
+    pub require_auth: bool,
 }
 
 /// An state machine capable of handling SMTP commands
@@ -32,17 +35,19 @@ impl StateMachine {
     pub const OH_HAI: &'static [u8] = b"220 kakimail\n";
     pub const KK: &'static [u8] = b"250 Ok\n";
     pub const AUTH_OK: &'static [u8] = b"235 Ok\n";
-    pub const AUTH_NOT_OK: &'static [u8] = b"554 Error\n";
+    pub const AUTH_NOT_OK: &'static [u8] = b"535 Authentication error\n";
+    pub const NOT_AUTHED_YET: &'static [u8] = b"530 Need authentication\n";
     pub const SEND_DATA_PLZ: &'static [u8] = b"354 End data with <CR><LF>.<CR><LF>\n";
     pub const KTHXBYE: &'static [u8] = b"221 Bye\n";
     pub const HOLD_YOUR_HORSES: &'static [u8] = &[];
 
-    pub fn new(domain: impl AsRef<str>) -> Self {
+    pub fn new(domain: impl AsRef<str>, require_auth: bool) -> Self {
         let domain = domain.as_ref();
         let ehlo_greeting = format!("250-{domain} Hello {domain}\n250 AUTH PLAIN LOGIN\n");
         Self {
             state: State::Fresh,
             ehlo_greeting,
+            require_auth,
         }
     }
 
@@ -87,19 +92,24 @@ impl StateMachine {
                     )
                 {
                     tracing::info!("success!, logged in!");
-                    self.state = State::Greeted;
+                    self.state = State::Authed;
                     return Ok(StateMachine::AUTH_OK);
+                } else {
+                    self.state = State::Greeted;
                 }
                 tracing::info!("wrong credentials: {login}");
                 Ok(StateMachine::AUTH_NOT_OK)
             }
-            ("mail", State::Greeted) => {
+            ("mail", curr_state) => {
+                if curr_state == State::Greeted && self.require_auth {
+                    tracing::warn!("Didn't sign in!");
+                    return Ok(StateMachine::NOT_AUTHED_YET);
+                }
                 tracing::trace!("Receiving MAIL");
                 let from = msg.next().context("received empty MAIL")?;
                 let from = from
                     .strip_prefix("FROM:")
                     .context("received incorrect MAIL")?;
-                tracing::debug!("FROM: {from}");
                 self.state = State::ReceivingRcpt(Mail {
                     from: from.to_string(),
                     ..Default::default()
@@ -111,7 +121,6 @@ impl StateMachine {
                 let to = msg.next().context("received empty RCPT")?;
                 let to = to.strip_prefix("TO:").context("received incorrect RCPT")?;
                 let to = to.to_lowercase();
-                tracing::debug!("TO: {to}");
                 if Self::legal_recipient(&to) {
                     mail.to.push(to);
                 } else {

@@ -20,7 +20,7 @@ impl SmtpIncoming {
     pub async fn new(domain: impl AsRef<str>, stream: tokio::net::TcpStream) -> Result<Self> {
         Ok(Self {
             stream,
-            state_machine: StateMachine::new(domain),
+            state_machine: StateMachine::new(domain, false),
             db: Arc::new(Mutex::new(database::Client::new().await?)),
         })
     }

@@ -28,7 +28,7 @@ impl SmtpOutgoing {
     pub async fn new(domain: impl AsRef<str>, stream: tokio::net::TcpStream) -> Result<Self> {
         Ok(Self {
             stream,
-            state_machine: StateMachine::new(domain),
+            state_machine: StateMachine::new(domain, true),
             // message_queue: Arc::new(Mutex::new(Vec::new())),
         })
     }
@@ -43,8 +43,6 @@ impl SmtpOutgoing {
                 break;
             }
             let msg = std::str::from_utf8(&buf[0..n])?;
-            tracing::info!("recieved traffic on port 587: {:?}", msg);
-            tracing::info!("{:?}", &self.state_machine.state);
             let response = self.state_machine.handle_smtp(msg)?;
             if response != StateMachine::HOLD_YOUR_HORSES {
                 self.stream.write_all(response).await?;
@@ -58,16 +56,13 @@ impl SmtpOutgoing {
         //TODO: require auth with mail submission (do the logic in ./smtp_common.rs)
         match self.state_machine.state {
             State::Received(mail) => {
-                tracing::info!("{:?}", mail);
                 for rcpt in mail.to {
-                    tracing::info!("recipient: {rcpt}");
                     if let Some((_, domain)) = rcpt.split_once("@") {
                         let domain = domain
                             .strip_suffix(">")
                             .expect("emails to be formatted inside angle brackets"); //hacky
                         let resolver = utils::DnsResolver::default_new();
                         let ip = resolver.resolve_mx(domain).await?;
-                        tracing::info!("supposed to send email to: {:?}", ip);
                         //TODO: establish connection on port 25 and send the appropriate smtp
                         //commands (maybe need a new state_machine???)
                     }
