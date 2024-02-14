@@ -26,14 +26,15 @@ async fn main() -> Result<()> {
     let smtp_port = std::env::args().nth(2).unwrap_or("25".to_string());
     let smtp_subs = std::env::args().nth(3).unwrap_or("587".to_string());
 
-    // let domain = &std::env::args()
-    //     .nth(2)
-    //     .unwrap_or("smtp.kaki.foo".to_string());
-    let domain = &"smtp.kaki.foo".to_string();
+    let domain = &std::env::args()
+        .nth(4)
+        .unwrap_or("smtp.kaki.foo".to_string());
 
     let incoming_listener = TcpListener::bind(format!("{smtp_addr}:{smtp_port}")).await?;
     let outgoing_listener = TcpListener::bind(format!("{smtp_addr}:{smtp_subs}")).await?;
     tracing::info!("listening on: {}", smtp_addr);
+    tracing::info!("smtp port is: {}", smtp_port);
+    tracing::info!("submission port is: {}", smtp_subs);
     tracing::info!("smtp server for {domain} started!");
 
     // let resolver = utils::DnsResolver::default_new();
@@ -43,7 +44,7 @@ async fn main() -> Result<()> {
     loop {
         tokio::select! {
             Ok((incoming_stream, incoming_addr)) = incoming_listener.accept() => {
-                tracing::debug!("recieved incoming connection from {}", incoming_addr);
+                tracing::info!("recieved incoming connection from {}", incoming_addr);
                 tokio::task::LocalSet::new()
                     .run_until(async move {
                         let smtp = smtp_incoming::SmtpIncoming::new(domain, incoming_stream).await?;
@@ -53,7 +54,7 @@ async fn main() -> Result<()> {
                     .ok();
             }
             Ok((outgoing_stream, outgoing_addr)) = outgoing_listener.accept() => {
-                tracing::debug!("recieved outgoing connection from {}", outgoing_addr);
+                tracing::info!("recieved outgoing connection from {}", outgoing_addr);
                 tokio::task::LocalSet::new()
                     .run_until(async move {
                         let smtp = smtp_outgoing::SmtpOutgoing::new(domain, outgoing_stream).await?;

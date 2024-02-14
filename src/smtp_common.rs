@@ -22,7 +22,7 @@ pub enum State {
 pub struct StateMachine {
     pub state: State,
     pub ehlo_greeting: String,
-    pub require_auth: bool,
+    pub outgoing: bool,
 }
 
 /// An state machine capable of handling SMTP commands
@@ -41,13 +41,13 @@ impl StateMachine {
     pub const KTHXBYE: &'static [u8] = b"221 Bye\n";
     pub const HOLD_YOUR_HORSES: &'static [u8] = &[];
 
-    pub fn new(domain: impl AsRef<str>, require_auth: bool) -> Self {
+    pub fn new(domain: impl AsRef<str>, outgoing: bool) -> Self {
         let domain = domain.as_ref();
         let ehlo_greeting = format!("250-{domain} Hello {domain}\n250 AUTH PLAIN LOGIN\n");
         Self {
             state: State::Fresh,
             ehlo_greeting,
-            require_auth,
+            outgoing,
         }
     }
 
@@ -59,7 +59,7 @@ impl StateMachine {
         let state = std::mem::replace(&mut self.state, State::Fresh);
         match (command.as_str(), state) {
             ("ehlo", State::Fresh) => {
-                tracing::trace!("Sending AUTH info");
+                tracing::info!("Sending AUTH info");
                 self.state = State::Greeted;
                 Ok(self.ehlo_greeting.as_bytes())
             }
@@ -101,7 +101,7 @@ impl StateMachine {
                 Ok(StateMachine::AUTH_NOT_OK)
             }
             ("mail", curr_state) => {
-                if curr_state == State::Greeted && self.require_auth {
+                if curr_state == State::Greeted && self.outgoing {
                     tracing::warn!("Didn't sign in!");
                     return Ok(StateMachine::NOT_AUTHED_YET);
                 }

@@ -7,7 +7,7 @@ from dotenv import dotenv_values
 
 config = dotenv_values("../.env")
 
-to_addr = "kkirvela@gmail.com"
+to_addr = "testto@kaki.foo"
 from_addr = "testfrom@kaki.foo"
 
 # Add the From: and To: headers at the start!

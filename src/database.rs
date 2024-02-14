@@ -21,7 +21,7 @@ impl Client {
         }
         let db = libsql_client::new_client().await?;
         db.batch([
-            "CREATE TABLE IF NOT EXISTS mail (date text, sender text, recipients text, data text)",
+            "CREATE TABLE IF NOT EXISTS mail (date text, sender text, recipients text, data text, outgoing bool)",
             "CREATE INDEX IF NOT EXISTS mail_date ON mail(date)",
             "CREATE INDEX IF NOT EXISTS mail_recipients ON mail(recipients)",
         ])
@@ -30,14 +30,15 @@ impl Client {
     }
 
     /// Replicates received mail to the database
-    pub async fn replicate(&self, mail: Mail) -> Result<()> {
+    pub async fn replicate(&self, mail: Mail, outgoing: bool) -> Result<()> {
         let now = chrono::offset::Utc::now()
             .format("%Y-%m-%d %H:%M:%S%.3f")
             .to_string();
+        let sql_bool = if outgoing { 1 } else { 0 };
         self.db
             .execute(Statement::with_args(
-                "INSERT INTO mail VALUES (?, ?, ?, ?)",
-                libsql_client::args!(now, mail.from, mail.to.join(", "), mail.data),
+                "INSERT INTO mail VALUES (?, ?, ?, ?, ?)",
+                libsql_client::args!(now, mail.from, mail.to.join(", "), mail.data, sql_bool),
             ))
             .await
             .map(|_| ())
