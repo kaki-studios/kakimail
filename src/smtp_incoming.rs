@@ -30,7 +30,7 @@ impl SmtpIncoming {
         self.greet().await?;
 
         // let mut buf = vec![0; 65536];
-        let mut buf: &mut [u8] = &mut [0; 65536];
+        let mut buf: [u8; 65536] = [0; 65536];
         loop {
             let n = self.stream.read(&mut buf).await?;
 
@@ -52,6 +52,7 @@ impl SmtpIncoming {
         }
         match self.state_machine.state {
             State::Received(mail) => {
+                tracing::info!("got mail!");
                 self.db.lock().await.replicate(mail, false).await?;
             }
             State::ReceivingData(mail) => {

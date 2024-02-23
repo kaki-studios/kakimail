@@ -8,6 +8,7 @@ use tracing_subscriber::fmt;
 use tracing_subscriber::prelude::*;
 
 mod database;
+mod imap;
 mod smtp_common;
 mod smtp_incoming;
 mod smtp_outgoing;
@@ -21,20 +22,23 @@ async fn main() -> Result<()> {
         .with(fmt::layer().with_filter(filter::LevelFilter::from_level(Level::INFO)))
         .init();
     // tracing_subscriber::fmt::init();
+    let mut args = std::env::args();
 
-    let smtp_addr = std::env::args().nth(1).unwrap_or("127.0.0.1".to_string());
-    let smtp_port = std::env::args().nth(2).unwrap_or("25".to_string());
-    let smtp_subs = std::env::args().nth(3).unwrap_or("587".to_string());
+    let smtp_addr = args.nth(1).unwrap_or("127.0.0.1".to_string());
+    let smtp_port = args.next().unwrap_or("25".to_string());
+    let smtp_subm = args.next().unwrap_or("587".to_string());
+    let imap_port = args.next().unwrap_or("143".to_string());
+    tracing::info!("{:?}", (&smtp_addr, &smtp_port, &smtp_subm, &imap_port));
 
-    let domain = &std::env::args()
-        .nth(4)
-        .unwrap_or("smtp.kaki.foo".to_string());
+    let domain = &args.next().unwrap_or("smtp.kaki.foo".to_string());
 
     let incoming_listener = TcpListener::bind(format!("{smtp_addr}:{smtp_port}")).await?;
-    let outgoing_listener = TcpListener::bind(format!("{smtp_addr}:{smtp_subs}")).await?;
+    let outgoing_listener = TcpListener::bind(format!("{smtp_addr}:{smtp_subm}")).await?;
+    let imap_listener = TcpListener::bind(format!("{smtp_addr}:{imap_port}")).await?;
     tracing::info!("listening on: {}", smtp_addr);
     tracing::info!("smtp port is: {}", smtp_port);
-    tracing::info!("submission port is: {}", smtp_subs);
+    tracing::info!("submission port is: {}", smtp_subm);
+    tracing::info!("imap port is: {}", imap_port);
     tracing::info!("smtp server for {domain} started!");
 
     // let resolver = utils::DnsResolver::default_new();
@@ -58,6 +62,17 @@ async fn main() -> Result<()> {
                 tokio::task::LocalSet::new()
                     .run_until(async move {
                         let smtp = smtp_outgoing::SmtpOutgoing::new(domain, outgoing_stream).await?;
+                        smtp.serve().await
+                    })
+                    .await
+                    .ok();
+            }
+            Ok((imap_stream, imap_addr)) = imap_listener.accept() => {
+                tracing::info!("recieved imap connection from {}", imap_addr);
+                tokio::task::LocalSet::new()
+                    .run_until(async move {
+                        //TODO: make IMAP
+                        let smtp = smtp_outgoing::SmtpOutgoing::new(domain, imap_stream).await?;
                         smtp.serve().await
                     })
                     .await

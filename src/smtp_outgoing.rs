@@ -1,26 +1,17 @@
 use std::sync::Arc;
 
-// use crate::utils::Mail;
 use crate::database;
 use crate::smtp_common::State;
 use crate::smtp_common::StateMachine;
 use crate::utils;
 use anyhow::Result;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    // sync::Mutex,
-};
-// use tokio::sync::Mutex;
 
-// use crate::smtp_incoming::StateMachine;
-
-//hehe
-#[allow(unused)]
 pub struct SmtpOutgoing {
     pub stream: tokio::net::TcpStream,
-    // message_queue: Arc<Mutex<Vec<Mail>>>,
+    //should add message queue when using seriously
     pub state_machine: StateMachine,
     pub db: Arc<Mutex<database::Client>>,
 }
@@ -59,7 +50,7 @@ impl SmtpOutgoing {
         match self.state_machine.state {
             State::Received(mail) => {
                 //send mail, everything was succesful!
-                SmtpOutgoing::send_mail(mail.clone()).await?;
+                SmtpOutgoing::send_mail(&mail).await?;
                 self.db.lock().await.replicate(mail, true).await?;
             }
             State::ReceivingData(mail) => {
@@ -78,7 +69,7 @@ impl SmtpOutgoing {
             .await
             .map_err(|e| e.into())
     }
-    async fn send_mail(mail: crate::smtp_common::Mail) -> Result<()> {
+    async fn send_mail(mail: &crate::smtp_common::Mail) -> Result<()> {
         let resolver = utils::DnsResolver::default_new();
         for rcpt in &mail.to {
             if let Some((_, domain)) = rcpt.split_once("@") {
@@ -91,29 +82,53 @@ impl SmtpOutgoing {
                 let ip = "127.0.0.1";
                 let port = "7779";
                 //our own port
-                //BIG NOTE: this will time out on port 25 unless you request to unblock port 25
+                //BIG NOTE: this will timeout on port 25 unless you request to unblock port 25
                 let mut connection = TcpStream::connect(format!("{ip}:{port}")).await?;
-                tracing::info!("connection succesful");
+                tracing::debug!("connection succesful");
                 // let mut buf = vec![0; 65536];
-                let mut buf: &mut [u8] = &mut [0; 65536];
+                let mut buf: [u8; 65536] = [0; 65536];
                 let commands = Self::gen_commands(&mail);
                 let n = connection.read(&mut buf).await?;
                 let string = std::str::from_utf8(&buf[0..n])?;
-                tracing::info!("greeting: {string}");
+                tracing::debug!("greeting: {string}");
                 for cmd in commands {
                     connection.write_all(cmd.as_bytes()).await?;
-                    tracing::info!("wrote: {cmd}");
+                    tracing::debug!("wrote: {cmd}");
                     let n = connection.read(&mut buf).await?;
                     let string = std::str::from_utf8(&buf[0..n])?;
-                    tracing::info!("read: {string}");
+                    tracing::debug!("read: {string}");
                     let statuscode = &string[..3];
-                    if statuscode != "250" {
-                        if statuscode == "421" {
-                            //close connection
-                            tracing::warn!("got statuscode 421");
-                        } else {
-                            //reset connection
-                            tracing::warn!("got statuscode {statuscode}");
+                    match statuscode
+                        .chars()
+                        .next()
+                        .ok_or(anyhow::anyhow!("bad statuscode"))?
+                    {
+                        '2' | '3' => {
+                            //2yz (Positive Completion Reply): The requested action has been successfully completed.
+                            //3yz (Positive Intermediate Reply): The command has been accepted, but the requested action
+                            //is being held in abeyance, pending receipt of further information.
+
+                            //everything was ok
+                            //3yx codes usually appear like: "354 End data with <CR><LF>.<CR><LF>\n"
+                            //so don't do anything
+                            tracing::info!("{statuscode}");
+                        }
+                        '4' => {
+                            //4yz (Transient Negative Completion Reply): The command was not accepted, and the requested action did not occur.
+                            //However, the error condition is temporary, and the action may be requested again.
+                            tracing::warn!("got a 4yx statuscode: {statuscode}, trying again");
+                            // try again?
+                            connection.write_all(cmd.as_bytes()).await?;
+                        }
+                        '5' => {
+                            //5yz (Permanent Negative Completion Reply): The command was not accepted and the requested action did not occur.
+                            //The SMTP client SHOULD NOT repeat the exact request (in the same sequence).
+                            tracing::warn!("got a 5yx statuscode: {statuscode}, ending connection");
+                            //quit?
+                            connection.write_all("quit\r\n".as_bytes()).await?;
+                        }
+                        _ => {
+                            tracing::warn!("invalid statuscode: {statuscode}");
                         }
                     }
                 }

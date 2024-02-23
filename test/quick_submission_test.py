@@ -21,6 +21,5 @@ if len(sys.argv) < 3:
 server = smtplib.SMTP(sys.argv[1], port=int(sys.argv[2]))
 server.set_debuglevel(1)
 server.login(config["USERNAME"], config["PASSWORD"])
-# what if we don't login!??
 server.sendmail(from_addr, to_addr, msg)
 server.quit()
