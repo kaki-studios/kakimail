@@ -2,13 +2,14 @@
 
 - [X] proper dockerfile and deployment
 - [X] email receiving
+- [X] testing (using python scripts hehe)
 - [X] email sending (at least to kakimail)
 - [X] enforce auth when submitting email through port 587
 - [X] some kind of database
 - [ ] IMAP
-- [ ] TLS
-~~proper database or file-based storage (database better)~~ i'm doing file-based database for now
-- [X] testing (using python scripts hehe)
+- [ ] support for some SMTP extensions
+- [ ] TLS with [rustls](https://crates.io/crates/rustls)
+
 
 
 other stuff?? add here!

@@ -1,0 +1,51 @@
+                   +----------------------+
+                   |connection established|
+                   +----------------------+
+                              ||
+                              \/
+            +--------------------------------------+
+            |          server greeting             |
+            +--------------------------------------+
+                      || (1)       || (2)        || (3)
+                      \/           ||            ||
+            +-----------------+    ||            ||
+            |Not Authenticated|    ||            ||
+            +-----------------+    ||            ||
+             || (7)   || (4)       ||            ||
+             ||       \/           \/            ||
+             ||     +----------------+           ||
+             ||     | Authenticated  |<=++       ||
+             ||     +----------------+  ||       ||
+             ||       || (7)   || (5)   || (6)   ||
+             ||       ||       \/       ||       ||
+             ||       ||    +--------+  ||       ||
+             ||       ||    |Selected|==++       ||
+             ||       ||    +--------+           ||
+             ||       ||       || (7)            ||
+             \/       \/       \/                \/
+            +--------------------------------------+
+            |               Logout                 |
+            +--------------------------------------+
+                              ||
+                              \/
+                +-------------------------------+
+                |both sides close the connection|
+                +-------------------------------+
+
+ Legend for the above diagram:
+
+(1)
+    connection without pre-authentication (OK greeting)
+
+(2)
+    pre-authenticated connection (PREAUTH greeting)
+(3)
+    rejected connection (BYE greeting)
+(4)
+    successful LOGIN or AUTHENTICATE command
+(5)
+    successful SELECT or EXAMINE command
+(6)
+    CLOSE or UNSELECT command, unsolicited CLOSED response code, or failed SELECT or EXAMINE command
+(7)
+    LOGOUT command, server shutdown, or connection closed

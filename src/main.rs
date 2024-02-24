@@ -71,9 +71,8 @@ async fn main() -> Result<()> {
                 tracing::info!("recieved imap connection from {}", imap_addr);
                 tokio::task::LocalSet::new()
                     .run_until(async move {
-                        //TODO: make IMAP
-                        let smtp = smtp_outgoing::SmtpOutgoing::new(domain, imap_stream).await?;
-                        smtp.serve().await
+                        let imap = imap::IMAP::new(imap_stream).await?;
+                        imap.serve().await
                     })
                     .await
                     .ok();

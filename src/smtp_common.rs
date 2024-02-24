@@ -10,7 +10,7 @@ pub struct Mail {
     pub data: String,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum State {
+pub enum SMTPState {
     Fresh,
     Greeted,
     Authed,
@@ -19,8 +19,8 @@ pub enum State {
     Received(Mail),
 }
 
-pub struct StateMachine {
-    pub state: State,
+pub struct SMTPStateMachine {
+    pub state: SMTPState,
     pub ehlo_greeting: String,
     pub outgoing: bool,
 }
@@ -31,7 +31,7 @@ pub struct StateMachine {
 /// The return value from handle_smtp() is the response
 /// that should be sent back to the client.
 /// Copied from edgemail, temporary
-impl StateMachine {
+impl SMTPStateMachine {
     pub const OH_HAI: &'static [u8] = b"220 kakimail\n";
     pub const KK: &'static [u8] = b"250 Ok\n";
     pub const AUTH_OK: &'static [u8] = b"235 Ok\n";
@@ -45,7 +45,7 @@ impl StateMachine {
         let domain = domain.as_ref();
         let ehlo_greeting = format!("250-{domain} Hello {domain}\n250 AUTH PLAIN LOGIN\n");
         Self {
-            state: State::Fresh,
+            state: SMTPState::Fresh,
             ehlo_greeting,
             outgoing,
         }
@@ -56,24 +56,24 @@ impl StateMachine {
         tracing::trace!("Received {raw_msg} in state {:?}", self.state);
         let mut msg = raw_msg.split_whitespace();
         let command = msg.next().context("received empty command")?.to_lowercase();
-        let state = std::mem::replace(&mut self.state, State::Fresh);
+        let state = self.state.clone();
         match (command.as_str(), state) {
-            ("ehlo", State::Fresh) => {
+            ("ehlo", SMTPState::Fresh) => {
                 tracing::info!("Sending AUTH info");
-                self.state = State::Greeted;
+                self.state = SMTPState::Greeted;
                 Ok(self.ehlo_greeting.as_bytes())
             }
-            ("helo", State::Fresh) => {
-                self.state = State::Greeted;
-                Ok(StateMachine::KK)
+            ("helo", SMTPState::Fresh) => {
+                self.state = SMTPState::Greeted;
+                Ok(SMTPStateMachine::KK)
             }
             ("noop", _) | ("help", _) | ("info", _) | ("vrfy", _) | ("expn", _) => {
                 tracing::trace!("Got {command}");
-                Ok(StateMachine::KK)
+                Ok(SMTPStateMachine::KK)
             }
             ("rset", _) => {
-                self.state = State::Fresh;
-                Ok(StateMachine::KK)
+                self.state = SMTPState::Fresh;
+                Ok(SMTPStateMachine::KK)
             }
             ("auth", _) => {
                 tracing::trace!("Acknowledging AUTH");
@@ -92,31 +92,31 @@ impl StateMachine {
                     )
                 {
                     tracing::info!("success!, logged in!");
-                    self.state = State::Authed;
-                    return Ok(StateMachine::AUTH_OK);
+                    self.state = SMTPState::Authed;
+                    return Ok(SMTPStateMachine::AUTH_OK);
                 } else {
-                    self.state = State::Greeted;
+                    self.state = SMTPState::Greeted;
                 }
                 tracing::info!("wrong credentials: {login}");
-                Ok(StateMachine::AUTH_NOT_OK)
+                Ok(SMTPStateMachine::AUTH_NOT_OK)
             }
             ("mail", curr_state) => {
-                if curr_state == State::Greeted && self.outgoing {
+                if curr_state == SMTPState::Greeted && self.outgoing {
                     tracing::warn!("Didn't sign in!");
-                    return Ok(StateMachine::NOT_AUTHED_YET);
+                    return Ok(SMTPStateMachine::NOT_AUTHED_YET);
                 }
                 tracing::trace!("Receiving MAIL");
                 let from = msg.next().context("received empty MAIL")?;
                 let from = from
                     .strip_prefix("FROM:")
                     .context("received incorrect MAIL")?;
-                self.state = State::ReceivingRcpt(Mail {
+                self.state = SMTPState::ReceivingRcpt(Mail {
                     from: from.to_string(),
                     ..Default::default()
                 });
-                Ok(StateMachine::KK)
+                Ok(SMTPStateMachine::KK)
             }
-            ("rcpt", State::ReceivingRcpt(mut mail)) => {
+            ("rcpt", SMTPState::ReceivingRcpt(mut mail)) => {
                 tracing::trace!("Receiving rcpt");
                 let to = msg.next().context("received empty RCPT")?;
                 let to = to.strip_prefix("TO:").context("received incorrect RCPT")?;
@@ -126,37 +126,37 @@ impl StateMachine {
                 } else {
                     tracing::warn!("Illegal recipient: {to}")
                 }
-                self.state = State::ReceivingRcpt(mail);
-                Ok(StateMachine::KK)
+                self.state = SMTPState::ReceivingRcpt(mail);
+                Ok(SMTPStateMachine::KK)
             }
-            ("data", State::ReceivingRcpt(mail)) => {
+            ("data", SMTPState::ReceivingRcpt(mail)) => {
                 tracing::trace!("Receiving data");
-                self.state = State::ReceivingData(mail);
-                Ok(StateMachine::SEND_DATA_PLZ)
+                self.state = SMTPState::ReceivingData(mail);
+                Ok(SMTPStateMachine::SEND_DATA_PLZ)
             }
-            ("quit", State::ReceivingData(mail)) => {
+            ("quit", SMTPState::ReceivingData(mail)) => {
                 tracing::trace!(
                     "Received data: FROM: {} TO:{} DATA:{}",
                     mail.from,
                     mail.to.join(", "),
                     mail.data
                 );
-                self.state = State::Received(mail);
-                Ok(StateMachine::KTHXBYE)
+                self.state = SMTPState::Received(mail);
+                Ok(SMTPStateMachine::KTHXBYE)
             }
             ("quit", _) => {
                 tracing::warn!("Received quit before getting any data");
-                Ok(StateMachine::KTHXBYE)
+                Ok(SMTPStateMachine::KTHXBYE)
             }
-            (_, State::ReceivingData(mut mail)) => {
+            (_, SMTPState::ReceivingData(mut mail)) => {
                 tracing::trace!("Receiving data");
                 let resp = if raw_msg.ends_with("\r\n.\r\n") {
-                    StateMachine::KK
+                    SMTPStateMachine::KK
                 } else {
-                    StateMachine::HOLD_YOUR_HORSES
+                    SMTPStateMachine::HOLD_YOUR_HORSES
                 };
                 mail.data += &raw_msg;
-                self.state = State::ReceivingData(mail);
+                self.state = SMTPState::ReceivingData(mail);
                 Ok(resp)
             }
             _ => anyhow::bail!(

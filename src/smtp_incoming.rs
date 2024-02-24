@@ -11,7 +11,7 @@ use crate::database;
 
 pub struct SmtpIncoming {
     pub stream: tokio::net::TcpStream,
-    pub state_machine: StateMachine,
+    pub state_machine: SMTPStateMachine,
     pub db: Arc<Mutex<database::Client>>,
 }
 
@@ -20,7 +20,7 @@ impl SmtpIncoming {
     pub async fn new(domain: impl AsRef<str>, stream: tokio::net::TcpStream) -> Result<Self> {
         Ok(Self {
             stream,
-            state_machine: StateMachine::new(domain, false),
+            state_machine: SMTPStateMachine::new(domain, false),
             db: Arc::new(Mutex::new(database::Client::new().await?)),
         })
     }
@@ -41,21 +41,21 @@ impl SmtpIncoming {
             }
             let msg = std::str::from_utf8(&buf[0..n])?;
             let response = self.state_machine.handle_smtp(msg)?;
-            if response != StateMachine::HOLD_YOUR_HORSES {
+            if response != SMTPStateMachine::HOLD_YOUR_HORSES {
                 self.stream.write_all(response).await?;
             } else {
                 tracing::debug!("Not responding, awaiting for more data");
             }
-            if response == StateMachine::KTHXBYE {
+            if response == SMTPStateMachine::KTHXBYE {
                 break;
             }
         }
         match self.state_machine.state {
-            State::Received(mail) => {
+            SMTPState::Received(mail) => {
                 tracing::info!("got mail!");
                 self.db.lock().await.replicate(mail, false).await?;
             }
-            State::ReceivingData(mail) => {
+            SMTPState::ReceivingData(mail) => {
                 tracing::info!("Received EOF before receiving QUIT");
                 self.db.lock().await.replicate(mail, false).await?;
             }
@@ -67,7 +67,7 @@ impl SmtpIncoming {
     /// Sends the initial SMTP greeting
     async fn greet(&mut self) -> Result<()> {
         self.stream
-            .write_all(StateMachine::OH_HAI)
+            .write_all(SMTPStateMachine::OH_HAI)
             .await
             .map_err(|e| e.into())
     }
