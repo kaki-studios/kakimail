@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Context, Ok, Result};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::Mutex,
@@ -31,21 +31,21 @@ impl IMAPStateMachine {
             state: IMAPState::NotAuthed,
         }
     }
-    ///weird return type ik, NOTE: inefficient and hacky
+    //weird return type ik, NOTE: inefficient and hacky
     fn handle_imap(&mut self, raw_msg: &str) -> Result<Vec<Vec<u8>>> {
         tracing::trace!("Received {raw_msg} in state {:?}", self.state);
         let mut msg = raw_msg.split_whitespace();
-        let tag = msg.next().context("received empty tag")?.to_lowercase();
+        let tag = msg.next().context("received empty tag")?;
         let command = msg.next().context("received empty command")?.to_lowercase();
         tracing::trace!("msg id is: {}, command is {}", tag, command);
         let state = self.state.clone();
         match (command.as_str(), state) {
             ("noop", _) => {
-                let value = format!("{} OK NOOP COMPLETED", tag);
+                let value = format!("{} OK NOOP completed\r\n", tag);
                 Ok(vec![value.as_bytes().to_vec()])
             }
             ("capability", _) => {
-                let value = "* CAPABILITY IMAP4rev2 IMAP4rev1 AUTH=GSSAPI AUTH=PLAIN\r\n";
+                let value = "* CAPABILITY IMAP4rev1 AUTH=PLAIN\r\n";
                 let value2 = format!("{} OK CAPABILITY completed\r\n", tag);
                 Ok(vec![value.as_bytes().to_vec(), value2.as_bytes().to_vec()])
             }
@@ -57,15 +57,27 @@ impl IMAPStateMachine {
                     .as_bytes()
                     .to_vec();
                 resp.push(tagged);
+                self.state = IMAPState::Logout;
                 Ok(resp)
             }
             ("starttls", x) if x >= IMAPState::NotAuthed => {
-                let value = format!("{}, NO starttls not implemented yet", tag);
+                let value = format!("{}, NO starttls not implemented yet\r\n", tag);
                 Ok(vec![value.as_bytes().to_vec()])
             }
             ("authenticate", IMAPState::NotAuthed) => {
+                let method = msg
+                    .next()
+                    .context("should provide auth mechanism")?
+                    .to_lowercase();
+                if method != "plain" {
+                    //not supported
+                } else {
+                    let login_encoded = msg.next().context("should provide login info")?;
+
+                    //decode the same
+                }
                 //READ: https://datatracker.ietf.org/doc/html/rfc9051#name-authenticate-command
-                Err(anyhow!("not implemented!"))
+                Err(anyhow!("authenticate not implemented yet!"))
             }
             _ => anyhow::bail!(
                 "Unexpected message received in state {:?}: {raw_msg}",
@@ -99,14 +111,16 @@ impl IMAP {
 
             if n == 0 {
                 tracing::info!("Received EOF");
-                self.state_machine.handle_imap("quit").ok();
+                self.state_machine.handle_imap("logout").ok();
                 break;
             }
             let msg = std::str::from_utf8(&buf[0..n])?;
             let responses = self.state_machine.handle_imap(msg)?;
             for response in responses {
-                dbg!(&response);
                 self.stream.write_all(&response).await?;
+            }
+            if self.state_machine.state == IMAPState::Logout {
+                break;
             }
             // if response != SMTPStateMachine::HOLD_YOUR_HORSES {
 
