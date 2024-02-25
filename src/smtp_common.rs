@@ -32,13 +32,13 @@ pub struct SMTPStateMachine {
 /// that should be sent back to the client.
 /// Copied from edgemail, temporary
 impl SMTPStateMachine {
-    pub const OH_HAI: &'static [u8] = b"220 kakimail\n";
-    pub const KK: &'static [u8] = b"250 Ok\n";
-    pub const AUTH_OK: &'static [u8] = b"235 Ok\n";
-    pub const AUTH_NOT_OK: &'static [u8] = b"535 Authentication error\n";
-    pub const NOT_AUTHED_YET: &'static [u8] = b"530 Need authentication\n";
-    pub const SEND_DATA_PLZ: &'static [u8] = b"354 End data with <CR><LF>.<CR><LF>\n";
-    pub const KTHXBYE: &'static [u8] = b"221 Bye\n";
+    pub const OH_HAI: &'static [u8] = b"220 kakimail\r\n";
+    pub const KK: &'static [u8] = b"250 Ok\r\n";
+    pub const AUTH_OK: &'static [u8] = b"235 Ok\r\n";
+    pub const AUTH_NOT_OK: &'static [u8] = b"535 Authentication error\r\n";
+    pub const NOT_AUTHED_YET: &'static [u8] = b"530 Need authentication\r\n";
+    pub const SEND_DATA_PLZ: &'static [u8] = b"354 End data with <CR><LF>.<CR><LF>\r\n";
+    pub const KTHXBYE: &'static [u8] = b"221 Bye\r\n";
     pub const HOLD_YOUR_HORSES: &'static [u8] = &[];
 
     pub fn new(domain: impl AsRef<str>, outgoing: bool) -> Self {

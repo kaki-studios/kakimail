@@ -19,7 +19,7 @@ async fn main() -> Result<()> {
     // dotenv().ok();
     dotenv()?;
     tracing_subscriber::registry()
-        .with(fmt::layer().with_filter(filter::LevelFilter::from_level(Level::INFO)))
+        .with(fmt::layer().with_filter(filter::LevelFilter::from_level(Level::TRACE)))
         .init();
     // tracing_subscriber::fmt::init();
     let mut args = std::env::args();

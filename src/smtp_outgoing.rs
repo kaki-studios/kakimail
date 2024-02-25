@@ -76,11 +76,11 @@ impl SmtpOutgoing {
                 let domain = domain
                     .strip_suffix(">") //NOTE: hacky
                     .expect("emails to be formatted inside angle brackets"); //hacky
-                let _ip = resolver.resolve_mx(domain).await?;
+                let _real_ip = resolver.resolve_mx(domain).await?;
                 //NOTE: here we are sending email to ourselves so that we don't get blacklisted or
                 //something else
                 let ip = "127.0.0.1";
-                let port = "7779";
+                let port = "7780";
                 //our own port
                 //BIG NOTE: this will timeout on port 25 unless you request to unblock port 25
                 let mut connection = TcpStream::connect(format!("{ip}:{port}")).await?;
