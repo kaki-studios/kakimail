@@ -24,7 +24,7 @@ struct IMAPStateMachine {
 impl IMAPStateMachine {
     //eg: "* OK [CAPABILITY STARTTLS AUTH=SCRAM-SHA-256 LOGINDISABLED IMAP4rev2] IMAP4rev2 Service Ready"
     const GREETING: &'static [u8] = b"* OK IMAP4rev2 Service Ready\r\n";
-    const HOLD_YOUR_HORSES: &'static [u8] = &[];
+    const _HOLD_YOUR_HORSES: &'static [u8] = &[];
 
     fn new() -> Self {
         Self {
@@ -37,9 +37,9 @@ impl IMAPStateMachine {
         let mut msg = raw_msg.split_whitespace();
         let tag = msg.next().context("received empty tag")?;
         let command = msg.next().context("received empty command")?.to_lowercase();
-        tracing::trace!("msg id is: {}, command is {}", tag, command);
         let state = self.state.clone();
         match (command.as_str(), state) {
+            //ANY STATE
             ("noop", _) => {
                 let value = format!("{} OK NOOP completed\r\n", tag);
                 Ok(vec![value.as_bytes().to_vec()])
@@ -60,9 +60,27 @@ impl IMAPStateMachine {
                 self.state = IMAPState::Logout;
                 Ok(resp)
             }
+            //NOT AUTHED STATE
+            //starttls can be issued at "higher" states too
             ("starttls", x) if x >= IMAPState::NotAuthed => {
                 let value = format!("{}, NO starttls not implemented yet\r\n", tag);
                 Ok(vec![value.as_bytes().to_vec()])
+            }
+            ("login", IMAPState::NotAuthed) => {
+                let username = msg.next().context("should provide username")?;
+                let mut password = msg.next().context("should provice password")?;
+                //NOTE: python's imaplib submits passwords enclosed like this: \"password\"
+                //so we will need to remove them
+                password = &password[1..password.len() - 1];
+                if username == std::env::var("USERNAME")? && password == std::env::var("PASSWORD")?
+                {
+                    let good_msg = format!("{} OK LOGIN COMPLETED\r\n", tag);
+                    self.state = IMAPState::Authed;
+                    Ok(vec![good_msg.as_bytes().to_vec()])
+                } else {
+                    let bad_msg = format!("{} NO LOGIN INVALID\r\n", tag);
+                    Ok(vec![bad_msg.as_bytes().to_vec()])
+                }
             }
             ("authenticate", IMAPState::NotAuthed) => {
                 let method = msg
@@ -72,13 +90,68 @@ impl IMAPStateMachine {
                 if method != "plain" {
                     //not supported
                 } else {
-                    let login_encoded = msg.next().context("should provide login info")?;
+                    let _login_encoded = msg.next().context("should provide login info")?;
 
-                    //decode the same
+                    //decode the same way as utils.rs
                 }
                 //READ: https://datatracker.ietf.org/doc/html/rfc9051#name-authenticate-command
                 Err(anyhow!("authenticate not implemented yet!"))
             }
+            ("enable", x) if x >= IMAPState::Authed => {
+                let response = format!("{} BAD NO EXTENSIONS SUPPORTED", tag);
+                Ok(vec![response.as_bytes().to_vec()])
+            }
+            ("select", IMAPState::Authed) => {
+                //TODO
+                //need functionality in database.rs
+                //see: https://datatracker.ietf.org/doc/html/rfc9051#name-select-command
+                Err(anyhow!("not implemented"))
+            }
+            ("examine", IMAPState::Authed) => {
+                //same as select but the mailbox returned is read-only
+                Err(anyhow!("not implemented"))
+            }
+            ("create", IMAPState::Authed) => {
+                //TODO
+                Err(anyhow!("not implemented"))
+            }
+            ("delete", IMAPState::Authed) => {
+                //TODO
+                Err(anyhow!("not implemented"))
+            }
+            ("rename", IMAPState::Authed) => {
+                //TODO
+                Err(anyhow!("not implemented"))
+            }
+            ("subscribe", IMAPState::Authed) => {
+                //TODO
+                Err(anyhow!("not implemented"))
+            }
+            ("unsubscribe", IMAPState::Authed) => {
+                //TODO
+                Err(anyhow!("not implemented"))
+            }
+            ("list", IMAPState::Authed) => {
+                //TODO
+                Err(anyhow!("not implemented"))
+            }
+            ("namespace", IMAPState::Authed) => {
+                //TODO
+                Err(anyhow!("not implemented"))
+            }
+            ("status", IMAPState::Authed) => {
+                //TODO
+                Err(anyhow!("not implemented"))
+            }
+            ("append", IMAPState::Authed) => {
+                //TODO
+                Err(anyhow!("not implemented"))
+            }
+            ("idle", IMAPState::Authed) => {
+                //TODO
+                Err(anyhow!("not implemented"))
+            }
+            //MORE
             _ => anyhow::bail!(
                 "Unexpected message received in state {:?}: {raw_msg}",
                 self.state
@@ -102,6 +175,7 @@ impl IMAP {
             db: Arc::new(Mutex::new(database::Client::new().await?)),
         })
     }
+
     pub async fn serve(mut self) -> Result<()> {
         self.greet().await?;
 
