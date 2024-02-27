@@ -78,11 +78,9 @@ impl SMTPStateMachine {
             ("auth", _) => {
                 tracing::trace!("Acknowledging AUTH");
                 let auth = msg.nth(1).context("should provide auth info")?;
-                let engine = base64::engine::GeneralPurpose::new(
-                    &base64::alphabet::STANDARD,
-                    base64::engine::GeneralPurposeConfig::default(),
-                );
-                let decoded = engine.decode(auth).context("should be valid base64")?;
+                let decoded = crate::utils::DECODER
+                    .decode(auth)
+                    .context("should be valid base64")?;
                 let login = std::str::from_utf8(&decoded[0..])?;
                 if login
                     == format!(

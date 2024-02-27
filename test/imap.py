@@ -16,5 +16,11 @@ if len(sys.argv) < 3:
 client = imaplib.IMAP4(sys.argv[1], int(sys.argv[2]))
 client.debug = 4
 
-client.login(config["USERNAME"], config["PASSWORD"])
+
+# client.login(config["USERNAME"], config["PASSWORD"])
+def callback(bytes):
+    return None
+
+
+client.authenticate("PLAIN", callback)
 client.noop()

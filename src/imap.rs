@@ -1,20 +1,21 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Ok, Result};
+use base64::Engine;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     sync::Mutex,
 };
-use tracing::field::debug;
 
 use crate::database;
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd)]
 enum IMAPState {
-    NotAuthed = 0,
-    Authed = 1,
-    Selected = 2,
-    Logout = 3,
+    NotAuthed,
+    WaitingForAuth(String),
+    Authed,
+    Selected,
+    Logout,
 }
 struct IMAPStateMachine {
     //add new fields as needed. prolly need TLS stuff later on
@@ -34,6 +35,30 @@ impl IMAPStateMachine {
     //weird return type ik, NOTE: inefficient and hacky
     fn handle_imap(&mut self, raw_msg: &str) -> Result<Vec<Vec<u8>>> {
         tracing::trace!("Received {raw_msg} in state {:?}", self.state);
+        if let IMAPState::WaitingForAuth(tag) = &self.state.clone() {
+            return match crate::utils::DECODER.decode(raw_msg) {
+                Err(_) => Ok(vec![format!("{} BAD INVALID BASE64", tag)
+                    .as_bytes()
+                    .to_vec()]),
+                Result::Ok(decoded) => {
+                    if std::str::from_utf8(&decoded)?
+                        == &format!(
+                            "\0{}\0{}",
+                            std::env::var("USERNAME")?,
+                            std::env::var("PASSWORD")?
+                        )
+                    {
+                        self.state = IMAPState::Authed;
+                        Ok(vec![format!("{} OK Success", tag).as_bytes().to_vec()])
+                    } else {
+                        Ok(vec![format!("{} BAD Invalid Credentials", tag)
+                            .as_bytes()
+                            .to_vec()])
+                    }
+                }
+            };
+            //TODO
+        }
         let mut msg = raw_msg.split_whitespace();
         let tag = msg.next().context("received empty tag")?;
         let command = msg.next().context("received empty command")?.to_lowercase();
@@ -88,14 +113,46 @@ impl IMAPStateMachine {
                     .context("should provide auth mechanism")?
                     .to_lowercase();
                 if method != "plain" {
+                    Ok(vec![format!(
+                        "{} BAD Unsupported Authentication Mechanism",
+                        tag
+                    )
+                    .as_bytes()
+                    .to_vec()])
                     //not supported
                 } else {
-                    let _login_encoded = msg.next().context("should provide login info")?;
+                    match msg.next() {
+                        None => {
+                            //login will be in next message
+                            self.state = IMAPState::WaitingForAuth(tag.to_string());
+                            Ok(vec!["+\r\n".as_bytes().to_vec()])
+                        }
+                        Some(encoded) => match crate::utils::DECODER.decode(encoded) {
+                            Err(_) => Ok(vec![format!("{} BAD INVALID BASE64", tag)
+                                .as_bytes()
+                                .to_vec()]),
+                            Result::Ok(decoded) => {
+                                if std::str::from_utf8(&decoded)?
+                                    == &format!(
+                                        "\0{}\0{}",
+                                        std::env::var("USERNAME")?,
+                                        std::env::var("PASSWORD")?
+                                    )
+                                {
+                                    self.state = IMAPState::Authed;
+                                    Ok(vec![format!("{} OK Success", tag).as_bytes().to_vec()])
+                                } else {
+                                    Ok(vec![format!("{} BAD Invalid Credentials", tag)
+                                        .as_bytes()
+                                        .to_vec()])
+                                }
+                            }
+                        },
+                    }
 
                     //decode the same way as utils.rs
                 }
                 //READ: https://datatracker.ietf.org/doc/html/rfc9051#name-authenticate-command
-                Err(anyhow!("authenticate not implemented yet!"))
             }
             ("enable", x) if x >= IMAPState::Authed => {
                 let response = format!("{} BAD NO EXTENSIONS SUPPORTED", tag);

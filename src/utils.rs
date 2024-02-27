@@ -1,6 +1,11 @@
 use anyhow::{anyhow, Result};
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 
+pub const DECODER: base64::engine::GeneralPurpose = base64::engine::GeneralPurpose::new(
+    &base64::alphabet::STANDARD,
+    base64::engine::GeneralPurposeConfig::new(),
+);
+
 ///a struct used to resolve dns so that given a domain, we can find its ip
 pub struct DnsResolver {
     pub resolver: hickory_resolver::TokioAsyncResolver,
