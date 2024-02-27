@@ -19,7 +19,9 @@ client.debug = 4
 
 # client.login(config["USERNAME"], config["PASSWORD"])
 def callback(bytes):
-    return None
+    username = config["USERNAME"]
+    password = config["PASSWORD"]
+    return f"\0{username}\0{password}".encode()
 
 
 client.authenticate("PLAIN", callback)

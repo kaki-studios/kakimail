@@ -49,15 +49,15 @@ impl IMAPStateMachine {
                         )
                     {
                         self.state = IMAPState::Authed;
-                        Ok(vec![format!("{} OK Success", tag).as_bytes().to_vec()])
+                        Ok(vec![format!("{} OK Success\r\n", tag).as_bytes().to_vec()])
                     } else {
-                        Ok(vec![format!("{} BAD Invalid Credentials", tag)
+                        self.state = IMAPState::NotAuthed;
+                        Ok(vec![format!("{} BAD Invalid Credentials\r\n", tag)
                             .as_bytes()
                             .to_vec()])
                     }
                 }
             };
-            //TODO
         }
         let mut msg = raw_msg.split_whitespace();
         let tag = msg.next().context("received empty tag")?;
@@ -70,7 +70,7 @@ impl IMAPStateMachine {
                 Ok(vec![value.as_bytes().to_vec()])
             }
             ("capability", _) => {
-                let value = "* CAPABILITY IMAP4rev1 AUTH=PLAIN\r\n";
+                let value = "* CAPABILITY IMAP4rev1 IMAP4rev2 AUTH=PLAIN\r\n";
                 let value2 = format!("{} OK CAPABILITY completed\r\n", tag);
                 Ok(vec![value.as_bytes().to_vec(), value2.as_bytes().to_vec()])
             }
@@ -128,7 +128,7 @@ impl IMAPStateMachine {
                             Ok(vec!["+\r\n".as_bytes().to_vec()])
                         }
                         Some(encoded) => match crate::utils::DECODER.decode(encoded) {
-                            Err(_) => Ok(vec![format!("{} BAD INVALID BASE64", tag)
+                            Err(_) => Ok(vec![format!("{} BAD INVALID BASE64\r\n", tag)
                                 .as_bytes()
                                 .to_vec()]),
                             Result::Ok(decoded) => {
@@ -140,19 +140,16 @@ impl IMAPStateMachine {
                                     )
                                 {
                                     self.state = IMAPState::Authed;
-                                    Ok(vec![format!("{} OK Success", tag).as_bytes().to_vec()])
+                                    Ok(vec![format!("{} OK Success\r\n", tag).as_bytes().to_vec()])
                                 } else {
-                                    Ok(vec![format!("{} BAD Invalid Credentials", tag)
+                                    Ok(vec![format!("{} BAD Invalid Credentials\r\n", tag)
                                         .as_bytes()
                                         .to_vec()])
                                 }
                             }
                         },
                     }
-
-                    //decode the same way as utils.rs
                 }
-                //READ: https://datatracker.ietf.org/doc/html/rfc9051#name-authenticate-command
             }
             ("enable", x) if x >= IMAPState::Authed => {
                 let response = format!("{} BAD NO EXTENSIONS SUPPORTED", tag);
@@ -246,7 +243,13 @@ impl IMAP {
                 break;
             }
             let msg = std::str::from_utf8(&buf[0..n])?;
-            let responses = self.state_machine.handle_imap(msg)?;
+            let responses = match self.state_machine.handle_imap(msg) {
+                Result::Ok(t) => t,
+                Err(e) => {
+                    tracing::error!("ERROR IN IMAP state machine: \"{:?}\", continuing...", e);
+                    vec![]
+                }
+            };
             for response in responses {
                 self.stream.write_all(&response).await?;
             }
