@@ -17,23 +17,31 @@ enum IMAPState {
     Selected,
     Logout,
 }
-struct IMAPStateMachine {
+pub struct IMAP {
     //add new fields as needed. prolly need TLS stuff later on
     state: IMAPState,
+    stream: tokio::net::TcpStream,
+    db: Arc<Mutex<database::Client>>,
 }
 
-impl IMAPStateMachine {
+impl IMAP {
     //eg: "* OK [CAPABILITY STARTTLS AUTH=SCRAM-SHA-256 LOGINDISABLED IMAP4rev2] IMAP4rev2 Service Ready"
     const GREETING: &'static [u8] = b"* OK IMAP4rev2 Service Ready\r\n";
     const _HOLD_YOUR_HORSES: &'static [u8] = &[];
+    const FLAGS: &'static [u8] = b"* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n";
+    const PERMANENT_FLAGS: &'static [u8] = b"* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)]\r\n";
+    const LIST_CMD: &'static [u8] = b"* LIST () \"/\" INBOX\r\n";
 
-    fn new() -> Self {
-        Self {
+    /// Creates a new server from a connected stream
+    pub async fn new(stream: tokio::net::TcpStream) -> Result<Self> {
+        Ok(Self {
+            stream,
             state: IMAPState::NotAuthed,
-        }
+            db: Arc::new(Mutex::new(database::Client::new().await?)),
+        })
     }
     //weird return type ik, NOTE: inefficient and hacky
-    fn handle_imap(&mut self, raw_msg: &str) -> Result<Vec<Vec<u8>>> {
+    async fn handle_imap(&mut self, raw_msg: &str) -> Result<Vec<Vec<u8>>> {
         tracing::trace!("Received {raw_msg} in state {:?}", self.state);
         if let IMAPState::WaitingForAuth(tag) = &self.state.clone() {
             return match crate::utils::DECODER.decode(raw_msg) {
@@ -152,13 +160,13 @@ impl IMAPStateMachine {
                 }
             }
             ("enable", x) if x >= IMAPState::Authed => {
-                let response = format!("{} BAD NO EXTENSIONS SUPPORTED", tag);
+                let response = format!("{} BAD NO EXTENSIONS SUPPORTED\r\n", tag);
                 Ok(vec![response.as_bytes().to_vec()])
             }
             ("select", IMAPState::Authed) => {
                 let mailbox = match msg.next().context("should provide mailbox name") {
                     Err(_) => {
-                        return Ok(vec![format!("{} BAD missing arguments", tag)
+                        return Ok(vec![format!("{} BAD missing arguments\r\n", tag)
                             .as_bytes()
                             .to_vec()])
                     }
@@ -166,19 +174,40 @@ impl IMAPStateMachine {
                 };
                 //NOTE: only one mailbox for now idk
                 if mailbox != "INBOX" {
-                    return Ok(vec![format!("{} NO no such mailbox", tag)
+                    return Ok(vec![format!("{} NO no such mailbox\r\n", tag)
                         .as_bytes()
                         .to_vec()]);
                 }
+                let unix_time = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .context("Time shouldn't go backwards")?;
+                let seconds: u32 = unix_time.as_secs().try_into()?;
 
-                //TODO:
-                //need functionality in database.rs:
-                //UID!!! see: https://datatracker.ietf.org/doc/html/rfc9051#uid-def idea: predicted
-                //UID is always most recent message uid + 1. so message uids would be like 0 1 2 3
-                //4 5 6 7... so on, very simple!
-                //FLAGS!!! see below VV NOTE: also need to be able to change them
-                //https://datatracker.ietf.org/doc/html/rfc9051#name-select-command
-                Err(anyhow!("not implemented"))
+                let uid_validity = format!("* OK [UIDVALIDITY {}]\r\n", seconds)
+                    .as_bytes()
+                    .to_vec();
+
+                let db = self.db.lock().await;
+
+                let count = db.mail_count().await.context("mail_count failed")?;
+                let count_string = format!("* {} EXISTS\r\n", count).as_bytes().to_vec();
+
+                let expected_uid = db.latest_uid().await.context("problem with expected_uid")? + 1;
+                let expected_uid_string = format!("* OK [UIDNEXT {}]\r\n", expected_uid)
+                    .as_bytes()
+                    .to_vec();
+                let final_tagged = format!("{} OK [READ-WRITE] SELECT completed\r\n", tag)
+                    .as_bytes()
+                    .to_vec();
+                let response = vec![
+                    count_string,
+                    uid_validity,
+                    expected_uid_string,
+                    Self::FLAGS.to_vec(),
+                    Self::LIST_CMD.to_vec(),
+                    final_tagged,
+                ];
+                Ok(response)
             }
             ("examine", IMAPState::Authed) => {
                 //same as select but the mailbox returned is read-only
@@ -231,38 +260,19 @@ impl IMAPStateMachine {
             ),
         }
     }
-}
-
-pub struct IMAP {
-    pub stream: tokio::net::TcpStream,
-    state_machine: IMAPStateMachine,
-    pub db: Arc<Mutex<database::Client>>,
-}
-
-impl IMAP {
-    /// Creates a new server from a connected stream
-    pub async fn new(stream: tokio::net::TcpStream) -> Result<Self> {
-        Ok(Self {
-            stream,
-            state_machine: IMAPStateMachine::new(),
-            db: Arc::new(Mutex::new(database::Client::new().await?)),
-        })
-    }
-
     pub async fn serve(mut self) -> Result<()> {
         self.greet().await?;
-
         let mut buf: [u8; 65536] = [0; 65536];
         loop {
             let n = self.stream.read(&mut buf).await?;
 
             if n == 0 {
                 tracing::info!("Received EOF");
-                self.state_machine.handle_imap("logout").ok();
+                self.handle_imap("logout").await.ok();
                 break;
             }
             let msg = std::str::from_utf8(&buf[0..n])?;
-            let responses = match self.state_machine.handle_imap(msg) {
+            let responses = match self.handle_imap(msg).await {
                 Result::Ok(t) => t,
                 Err(e) => {
                     tracing::error!("ERROR IN IMAP state machine: \"{:?}\", continuing...", e);
@@ -272,7 +282,7 @@ impl IMAP {
             for response in responses {
                 self.stream.write_all(&response).await?;
             }
-            if self.state_machine.state == IMAPState::Logout {
+            if self.state == IMAPState::Logout {
                 break;
             }
             // if response != SMTPStateMachine::HOLD_YOUR_HORSES {
@@ -288,7 +298,7 @@ impl IMAP {
     }
     async fn greet(&mut self) -> Result<()> {
         self.stream
-            .write_all(IMAPStateMachine::GREETING)
+            .write_all(IMAP::GREETING)
             .await
             .map_err(|e| e.into())
     }
