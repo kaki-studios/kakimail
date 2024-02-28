@@ -156,9 +156,28 @@ impl IMAPStateMachine {
                 Ok(vec![response.as_bytes().to_vec()])
             }
             ("select", IMAPState::Authed) => {
-                //TODO
-                //need functionality in database.rs
-                //see: https://datatracker.ietf.org/doc/html/rfc9051#name-select-command
+                let mailbox = match msg.next().context("should provide mailbox name") {
+                    Err(_) => {
+                        return Ok(vec![format!("{} BAD missing arguments", tag)
+                            .as_bytes()
+                            .to_vec()])
+                    }
+                    Result::Ok(a) => a,
+                };
+                //NOTE: only one mailbox for now idk
+                if mailbox != "INBOX" {
+                    return Ok(vec![format!("{} NO no such mailbox", tag)
+                        .as_bytes()
+                        .to_vec()]);
+                }
+
+                //TODO:
+                //need functionality in database.rs:
+                //UID!!! see: https://datatracker.ietf.org/doc/html/rfc9051#uid-def idea: predicted
+                //UID is always most recent message uid + 1. so message uids would be like 0 1 2 3
+                //4 5 6 7... so on, very simple!
+                //FLAGS!!! see below VV NOTE: also need to be able to change them
+                //https://datatracker.ietf.org/doc/html/rfc9051#name-select-command
                 Err(anyhow!("not implemented"))
             }
             ("examine", IMAPState::Authed) => {
