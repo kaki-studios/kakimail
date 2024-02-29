@@ -77,7 +77,7 @@ impl Client {
         let a_week_ago = now - chrono::Duration::days(7);
         let a_week_ago = &a_week_ago.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
         tracing::trace!("Deleting old mail from before {a_week_ago}");
-        let count = self.mail_count().await?;
+        let count = self.mail_count().await.unwrap_or(0);
         tracing::debug!("Found {count} old mail");
 
         self.db

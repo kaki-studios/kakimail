@@ -14,7 +14,8 @@ enum IMAPState {
     NotAuthed,
     WaitingForAuth(String),
     Authed,
-    Selected,
+    ///false if read only
+    Selected(bool),
     Logout,
 }
 pub struct IMAP {
@@ -30,6 +31,8 @@ impl IMAP {
     const _HOLD_YOUR_HORSES: &'static [u8] = &[];
     const FLAGS: &'static [u8] = b"* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n";
     const PERMANENT_FLAGS: &'static [u8] = b"* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)]\r\n";
+    const NO_PERMANENT_FLAGS: &'static [u8] =
+        b"* OK [PERMANENTFLAGS ()] No permanent flags permitted\r\n";
     const LIST_CMD: &'static [u8] = b"* LIST () \"/\" INBOX\r\n";
 
     /// Creates a new server from a connected stream
@@ -42,6 +45,7 @@ impl IMAP {
     }
     //weird return type ik, NOTE: inefficient and hacky
     async fn handle_imap(&mut self, raw_msg: &str) -> Result<Vec<Vec<u8>>> {
+        dbg!(Self::FLAGS);
         tracing::trace!("Received {raw_msg} in state {:?}", self.state);
         if let IMAPState::WaitingForAuth(tag) = &self.state.clone() {
             return match crate::utils::DECODER.decode(raw_msg) {
@@ -104,6 +108,8 @@ impl IMAP {
                 let mut password = msg.next().context("should provice password")?;
                 //NOTE: python's imaplib submits passwords enclosed like this: \"password\"
                 //so we will need to remove them
+                //NOTE: this approach does't support passwords with spaces, but I think that's ok
+                //for now
                 password = &password[1..password.len() - 1];
                 if username == std::env::var("USERNAME")? && password == std::env::var("PASSWORD")?
                 {
@@ -163,7 +169,7 @@ impl IMAP {
                 let response = format!("{} BAD NO EXTENSIONS SUPPORTED\r\n", tag);
                 Ok(vec![response.as_bytes().to_vec()])
             }
-            ("select", IMAPState::Authed) => {
+            (x, IMAPState::Authed) if x == "select" || x == "examine" => {
                 let mailbox = match msg.next().context("should provide mailbox name") {
                     Err(_) => {
                         return Ok(vec![format!("{} BAD missing arguments\r\n", tag)
@@ -192,26 +198,39 @@ impl IMAP {
                 let count = db.mail_count().await.context("mail_count failed")?;
                 let count_string = format!("* {} EXISTS\r\n", count).as_bytes().to_vec();
 
-                let expected_uid = db.latest_uid().await.context("problem with expected_uid")? + 1;
+                let expected_uid = db.latest_uid().await.unwrap_or(0) + 1;
                 let expected_uid_string = format!("* OK [UIDNEXT {}]\r\n", expected_uid)
                     .as_bytes()
                     .to_vec();
-                let final_tagged = format!("{} OK [READ-WRITE] SELECT completed\r\n", tag)
-                    .as_bytes()
-                    .to_vec();
+                let final_tagged = if x == "select" {
+                    format!("{} OK [READ-WRITE] SELECT completed\r\n", tag)
+                        .as_bytes()
+                        .to_vec()
+                } else {
+                    format!("{} OK [READ-ONLY] EXAMINE COMPLETED\r\n", tag)
+                        .as_bytes()
+                        .to_vec()
+                };
+                let permanent_flags = if x == "select" {
+                    Self::PERMANENT_FLAGS
+                } else {
+                    Self::NO_PERMANENT_FLAGS
+                };
                 let response = vec![
                     count_string,
                     uid_validity,
                     expected_uid_string,
                     Self::FLAGS.to_vec(),
+                    permanent_flags.to_vec(),
                     Self::LIST_CMD.to_vec(),
                     final_tagged,
                 ];
+                if x == "select" {
+                    self.state = IMAPState::Selected(true);
+                } else {
+                    self.state = IMAPState::Selected(false)
+                }
                 Ok(response)
-            }
-            ("examine", IMAPState::Authed) => {
-                //same as select but the mailbox returned is read-only
-                Err(anyhow!("not implemented"))
             }
             ("create", IMAPState::Authed) => {
                 //TODO

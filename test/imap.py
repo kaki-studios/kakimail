@@ -25,4 +25,4 @@ def callback(bytes):
 
 
 client.authenticate("PLAIN", callback)
-client.select("INBOX", False)
+client.select("INBOX", True)
