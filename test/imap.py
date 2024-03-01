@@ -25,4 +25,9 @@ def callback(bytes):
 
 
 client.authenticate("PLAIN", callback)
+client.list()
 client.select("INBOX", True)
+client.capability()
+client.noop()
+client.close()
+client.logout()

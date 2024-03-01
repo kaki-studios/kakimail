@@ -31,6 +31,7 @@ impl IMAP {
     const _HOLD_YOUR_HORSES: &'static [u8] = &[];
     const FLAGS: &'static [u8] = b"* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n";
     const PERMANENT_FLAGS: &'static [u8] = b"* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)]\r\n";
+    ///shouldn't exist in the future
     const NAMESPACE: &'static [u8] = b"* NAMESPACE ((\"\" \"/\")) NIL NIL\r\n";
     const NO_PERMANENT_FLAGS: &'static [u8] =
         b"* OK [PERMANENTFLAGS ()] No permanent flags permitted\r\n";
@@ -47,7 +48,6 @@ impl IMAP {
     }
     //weird return type ik, NOTE: inefficient and hacky
     async fn handle_imap(&mut self, raw_msg: &str) -> Result<Vec<Vec<u8>>> {
-        dbg!(Self::FLAGS);
         tracing::trace!("Received {raw_msg} in state {:?}", self.state);
         if let IMAPState::WaitingForAuth(tag) = &self.state.clone() {
             return match crate::utils::DECODER.decode(raw_msg) {
@@ -275,7 +275,10 @@ impl IMAP {
             }
             ("list", IMAPState::Authed) => {
                 //TODO
-                Ok(vec![Self::LIST_CMD.to_vec()])
+                Ok(vec![
+                    Self::LIST_CMD.to_vec(),
+                    format!("{} OK LIST completed\r\n", tag).as_bytes().to_vec(),
+                ])
             }
             ("namespace", IMAPState::Authed) => {
                 //TODO
@@ -292,6 +295,13 @@ impl IMAP {
             ("idle", IMAPState::Authed) => {
                 //TODO
                 Err(anyhow!("not implemented"))
+            }
+            ("close", IMAPState::Selected(_)) => {
+                self.state = IMAPState::Authed;
+                let response = format!("{} OK CLOSE completed\r\n", tag)
+                    .as_bytes()
+                    .to_vec();
+                Ok(vec![response])
             }
             //MORE
             _ => anyhow::bail!(
