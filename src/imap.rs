@@ -31,8 +31,10 @@ impl IMAP {
     const _HOLD_YOUR_HORSES: &'static [u8] = &[];
     const FLAGS: &'static [u8] = b"* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n";
     const PERMANENT_FLAGS: &'static [u8] = b"* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)]\r\n";
+    const NAMESPACE: &'static [u8] = b"* NAMESPACE ((\"\" \"/\")) NIL NIL\r\n";
     const NO_PERMANENT_FLAGS: &'static [u8] =
         b"* OK [PERMANENTFLAGS ()] No permanent flags permitted\r\n";
+    ///shouldn't exist in the future
     const LIST_CMD: &'static [u8] = b"* LIST () \"/\" INBOX\r\n";
 
     /// Creates a new server from a connected stream
@@ -234,31 +236,50 @@ impl IMAP {
             }
             ("create", IMAPState::Authed) => {
                 //TODO
-                Err(anyhow!("not implemented"))
+                Ok(vec![format!(
+                    "{} NO cannot create multiple mailboxes\r\n",
+                    tag
+                )
+                .as_bytes()
+                .to_vec()])
             }
             ("delete", IMAPState::Authed) => {
                 //TODO
-                Err(anyhow!("not implemented"))
+                Ok(vec![format!("{} NO cannot delete mailboxes\r\n", tag)
+                    .as_bytes()
+                    .to_vec()])
             }
             ("rename", IMAPState::Authed) => {
                 //TODO
-                Err(anyhow!("not implemented"))
+                Ok(vec![format!("{} NO cannot rename mailboxes\r\n", tag)
+                    .as_bytes()
+                    .to_vec()])
             }
             ("subscribe", IMAPState::Authed) => {
                 //TODO
-                Err(anyhow!("not implemented"))
+                Ok(vec![format!(
+                    "{} NO cannot subscribe to mailboxes\r\n",
+                    tag
+                )
+                .as_bytes()
+                .to_vec()])
             }
             ("unsubscribe", IMAPState::Authed) => {
                 //TODO
-                Err(anyhow!("not implemented"))
+                Ok(vec![format!(
+                    "{} NO cannot unsubscribe from mailboxes\r\n",
+                    tag
+                )
+                .as_bytes()
+                .to_vec()])
             }
             ("list", IMAPState::Authed) => {
                 //TODO
-                Err(anyhow!("not implemented"))
+                Ok(vec![Self::LIST_CMD.to_vec()])
             }
             ("namespace", IMAPState::Authed) => {
                 //TODO
-                Err(anyhow!("not implemented"))
+                Ok(vec![Self::NAMESPACE.to_vec()])
             }
             ("status", IMAPState::Authed) => {
                 //TODO
