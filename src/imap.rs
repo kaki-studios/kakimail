@@ -296,12 +296,26 @@ impl IMAP {
                 //TODO
                 Err(anyhow!("not implemented"))
             }
-            ("close", IMAPState::Selected(_)) => {
+            (x, IMAPState::Selected(_)) if x == "close" || x == "unselect" => {
                 self.state = IMAPState::Authed;
-                let response = format!("{} OK CLOSE completed\r\n", tag)
-                    .as_bytes()
-                    .to_vec();
+                if x == "close" {
+                    //TODO: delete pending mail permanently
+                }
+                let response = if x == "close" {
+                    format!("{} OK CLOSE completed\r\n", tag)
+                        .as_bytes()
+                        .to_vec()
+                } else {
+                    format!("{} OK UNSELECT completed\r\n", tag)
+                        .as_bytes()
+                        .to_vec()
+                };
                 Ok(vec![response])
+            }
+            ("expunge", IMAPState::Selected(true)) => {
+                //TODO
+
+                Err(anyhow!("not implemented"))
             }
             //MORE
             _ => anyhow::bail!(

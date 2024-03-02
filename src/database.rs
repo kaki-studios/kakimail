@@ -24,7 +24,7 @@ impl Client {
             "CREATE TABLE IF NOT EXISTS mail (uid integer, date text, sender text, recipients text, data text, outgoing bool, flags integer)",
             "CREATE INDEX IF NOT EXISTS mail_date ON mail(date)",
             "CREATE INDEX IF NOT EXISTS mail_uid ON mail(uid)",
-            "CREATE INDEX IF NOT EXISTS mail_recipients ON mail(recipients)",
+            "CREATE INDEX IF NOT EXISTS mail_sender ON mail(sender)",
         ])
         .await?;
         Ok(Self { db })
