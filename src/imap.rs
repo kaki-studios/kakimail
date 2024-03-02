@@ -314,7 +314,10 @@ impl IMAP {
             }
             ("expunge", IMAPState::Selected(true)) => {
                 //TODO
-
+                Err(anyhow!("not implemented"))
+            }
+            ("search", IMAPState::Selected(_)) => {
+                //TODO
                 Err(anyhow!("not implemented"))
             }
             //MORE
