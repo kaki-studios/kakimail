@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.79"
 base64 = "0.21.7"
+bcrypt = "0.15.0"
 chrono = "0.4.33"
 dotenv = "0.15.0"
 hickory-resolver = "0.24.0"

@@ -1,6 +1,6 @@
 use crate::smtp_common::Mail;
 use anyhow::{anyhow, Context, Result};
-use libsql_client::{client::GenericClient, DatabaseClient, Statement};
+use libsql_client::{client::GenericClient, DatabaseClient, Statement, Value};
 
 pub struct Client {
     db: GenericClient,
@@ -20,49 +20,89 @@ impl Client {
             std::env::set_var("LIBSQL_CLIENT_URL", format!("file://{db_path}"));
         }
         let db = libsql_client::new_client().await?;
+
+        //USERS TABLE, just in case kakimail-website didn't create it already
         db.batch([
-            "CREATE TABLE IF NOT EXISTS mail (uid integer, date text, sender text, recipients text, data text, outgoing bool, flags integer)",
-            "CREATE INDEX IF NOT EXISTS mail_date ON mail(date)",
-            "CREATE INDEX IF NOT EXISTS mail_uid ON mail(uid)",
-            "CREATE INDEX IF NOT EXISTS mail_sender ON mail(sender)",
+            "PRAGMA foreign_keys = ON",
+            "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT UNIQUE, password TEXT);",
+            "CREATE INDEX IF NOT EXISTS users_name ON users(name);",
+            "CREATE INDEX IF NOT EXISTS users_id ON users(id);",
+            //TESTING PURPOSES ONLY
+            "INSERT OR IGNORE INTO users VALUES (0, 'test', 'nothashed')"
         ])
-        .await?;
+        .await.map_err(|e| {
+                tracing::error!("1. {:?}", e);
+                e
+            })?;
+
+        //MAILBOX TABLE
+        db.batch([
+            "PRAGMA foreign_keys = ON",
+            "CREATE TABLE IF NOT EXISTS mailboxes (mid integer primary key not null, user_id integer not null, flags integer, FOREIGN KEY(user_id) REFERENCES users(id));",
+            "CREATE INDEX IF NOT EXISTS mailbox_foreign_key ON mailboxes(user_id);",
+            "CREATE INDEX IF NOT EXISTS mailbox_id ON mailboxes(mid);",
+            //TESTING PURPOSES ONLY
+            "INSERT OR IGNORE INTO mailboxes VALUES (0, 0, 0)"
+        ])
+        .await.map_err(|e| {
+                tracing::error!("2. {:?}", e);
+                e
+            })?;
+
+        //MAIL TABLE
+        db.batch([
+            "CREATE TABLE IF NOT EXISTS mail (uid integer unique not null, date text, sender text, recipients text, data text, 
+             mailbox_id integer not null, flags integer, FOREIGN KEY(mailbox_id) REFERENCES mailboxes(id), PRIMARY KEY(uid));",
+            "CREATE INDEX IF NOT EXISTS mail_date ON mail(date);",
+            "CREATE INDEX IF NOT EXISTS mail_uid ON mail(uid);",
+            "CREATE INDEX IF NOT EXISTS mail_flags ON mail(flags);",
+            "CREATE INDEX IF NOT EXISTS mail_foreign_key ON mail(mailbox_id);",
+        ])
+        .await.map_err(|e| {
+                tracing::error!("3. {:?}", e);
+                e
+            })?;
         Ok(Self { db })
     }
-    pub async fn latest_uid(&self) -> Result<i64> {
+    pub async fn biggest_uid(&self) -> Result<i64> {
         let count: i64 = i64::try_from(
             self.db
-                .execute(Statement::new("SELECT * FROM mail"))
+                .execute(Statement::new("SELECT uid FROM mail"))
                 .await?
                 .rows
                 .last()
-                .context("No rows returned from a * query")?
+                .context("No rows returned from SELECT uid query")?
                 .values
                 .first()
-                .context("No values returned from a * query")?,
+                .context("No values returned from a SELECT uid query")?,
         )
         .unwrap_or(0);
         Ok(count)
     }
 
     /// Replicates received mail to the database
-    pub async fn replicate(&self, mail: Mail, outgoing: bool) -> Result<()> {
+    pub async fn replicate(&self, mail: Mail, mailbox_id: i32) -> Result<()> {
         let now = chrono::offset::Utc::now()
             .format("%Y-%m-%d %H:%M:%S%.3f")
             .to_string();
-        let sql_bool = if outgoing { 1 } else { 0 };
-        let latest_uid = self.latest_uid().await?;
+        let next_uid = self
+            .biggest_uid()
+            .await
+            .map_err(|e| tracing::info!("first mail, no previous mail: {:?}", e))
+            //so that it will become 0 in the db
+            .unwrap_or(-1)
+            + 1;
 
         self.db
             .execute(Statement::with_args(
                 "INSERT INTO mail VALUES (?, ?, ?, ?, ?, ?, ?)",
                 libsql_client::args!(
-                    latest_uid as i32 + 1,
+                    next_uid as i32,
                     now,
                     mail.from,
                     mail.to.join(", "),
                     mail.data,
-                    sql_bool,
+                    mailbox_id,
                     0
                 ),
             ))
@@ -102,6 +142,31 @@ impl Client {
                 .context("No values returned from a COUNT(*) query")?,
         )
         .map_err(|e| anyhow!(e))
+    }
+    ///used with plain auth
+    ///if user doesn't exist or the password is incorrect, returns None
+    ///otherwise returns the users id
+    pub async fn check_user(&self, username: &str, password: &str) -> Option<i32> {
+        let values = self
+            .db
+            .execute(Statement::with_args(
+                "SELECT _rowid_, password FROM users WHERE name = ?",
+                libsql_client::args!(username),
+            ))
+            .await
+            .ok()?;
+        //fighting with the compiler
+        let mut values = values.rows.first()?.values.iter();
+        let id = i32::try_from(values.next()?).ok()?;
+        let Value::Text { value: hash } = values.next()? else {
+            return None;
+        };
+
+        if !bcrypt::verify(password, hash).ok()? {
+            Option::None
+        } else {
+            Some(id)
+        }
     }
 }
 

@@ -41,9 +41,6 @@ async fn main() -> Result<()> {
     tracing::info!("imap port is: {}", imap_port);
     tracing::info!("smtp server for {domain} started!");
 
-    // let resolver = utils::DnsResolver::default_new();
-    // let _ip = resolver.resolve_mx("gmail.com").await?;
-
     //main server loop
     loop {
         tokio::select! {

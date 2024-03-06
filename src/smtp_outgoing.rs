@@ -50,8 +50,12 @@ impl SmtpOutgoing {
         match self.state_machine.state {
             SMTPState::Received(mail) => {
                 //send mail, everything was succesful!
-                SmtpOutgoing::send_mail(&mail).await?;
-                self.db.lock().await.replicate(mail, true).await?;
+                SmtpOutgoing::send_mail(&mail).await.map_err(|e| {
+                    tracing::error!("{:?}", e);
+                    e
+                })?;
+                //FIX
+                self.db.lock().await.replicate(mail, 0).await?;
             }
             SMTPState::ReceivingData(mail) => {
                 //TODO: should probably still send mail idk

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Ok, Result};
 use base64::Engine;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt},
     sync::Mutex,
 };
 
@@ -13,11 +13,18 @@ use crate::database;
 enum IMAPState {
     NotAuthed,
     WaitingForAuth(String),
-    Authed,
-    ///false if read only
-    Selected(bool),
+    ///userid
+    Authed(i32),
+    Selected(SelectedState),
     Logout,
 }
+#[derive(PartialEq, PartialOrd, Eq, Debug, Clone)]
+struct SelectedState {
+    read_only: bool,
+    user_id: i32,
+    mailbox_id: i32,
+}
+
 pub struct IMAP {
     //add new fields as needed. prolly need TLS stuff later on
     state: IMAPState,
@@ -55,17 +62,21 @@ impl IMAP {
                     .as_bytes()
                     .to_vec()]),
                 Result::Ok(decoded) => {
-                    if std::str::from_utf8(&decoded)?
-                        == &format!(
-                            "\0{}\0{}",
-                            std::env::var("USERNAME")?,
-                            std::env::var("PASSWORD")?
-                        )
-                    {
-                        self.state = IMAPState::Authed;
+                    let mut strings = decoded
+                        .strip_prefix(b"\0")
+                        .ok_or(anyhow!("auth error line 151"))?
+                        .split(|n| n == &0);
+                    let usrname_b = strings.next().ok_or(anyhow!("no password"))?;
+                    let usrname = std::str::from_utf8(usrname_b)?;
+                    let password_b = strings.next().ok_or(anyhow!("no password"))?;
+                    let password = std::str::from_utf8(password_b)?;
+
+                    let result = self.db.lock().await.check_user(usrname, password).await;
+
+                    if let Some(a) = result {
+                        self.state = IMAPState::Authed(a);
                         Ok(vec![format!("{} OK Success\r\n", tag).as_bytes().to_vec()])
                     } else {
-                        self.state = IMAPState::NotAuthed;
                         Ok(vec![format!("{} BAD Invalid Credentials\r\n", tag)
                             .as_bytes()
                             .to_vec()])
@@ -116,7 +127,8 @@ impl IMAP {
                 if username == std::env::var("USERNAME")? && password == std::env::var("PASSWORD")?
                 {
                     let good_msg = format!("{} OK LOGIN COMPLETED\r\n", tag);
-                    self.state = IMAPState::Authed;
+                    //FIX
+                    self.state = IMAPState::Authed(0);
                     Ok(vec![good_msg.as_bytes().to_vec()])
                 } else {
                     let bad_msg = format!("{} NO LOGIN INVALID\r\n", tag);
@@ -148,14 +160,20 @@ impl IMAP {
                                 .as_bytes()
                                 .to_vec()]),
                             Result::Ok(decoded) => {
-                                if std::str::from_utf8(&decoded)?
-                                    == &format!(
-                                        "\0{}\0{}",
-                                        std::env::var("USERNAME")?,
-                                        std::env::var("PASSWORD")?
-                                    )
-                                {
-                                    self.state = IMAPState::Authed;
+                                let mut strings = decoded
+                                    .strip_prefix(b"\0")
+                                    .ok_or(anyhow!("auth error line 151"))?
+                                    .split(|n| n == &0);
+                                let usrname_b = strings.next().ok_or(anyhow!("no password"))?;
+                                let usrname = std::str::from_utf8(usrname_b)?;
+                                let password_b = strings.next().ok_or(anyhow!("no password"))?;
+                                let password = std::str::from_utf8(password_b)?;
+
+                                let result =
+                                    self.db.lock().await.check_user(usrname, password).await;
+
+                                if let Some(a) = result {
+                                    self.state = IMAPState::Authed(a);
                                     Ok(vec![format!("{} OK Success\r\n", tag).as_bytes().to_vec()])
                                 } else {
                                     Ok(vec![format!("{} BAD Invalid Credentials\r\n", tag)
@@ -167,11 +185,12 @@ impl IMAP {
                     }
                 }
             }
-            ("enable", x) if x >= IMAPState::Authed => {
+            //FIX why is there a 0
+            ("enable", x) if x >= IMAPState::Authed(0) => {
                 let response = format!("{} BAD NO EXTENSIONS SUPPORTED\r\n", tag);
                 Ok(vec![response.as_bytes().to_vec()])
             }
-            (x, IMAPState::Authed) if x == "select" || x == "examine" => {
+            (x, IMAPState::Authed(y)) if x == "select" || x == "examine" => {
                 let mailbox = match msg.next().context("should provide mailbox name") {
                     Err(_) => {
                         return Ok(vec![format!("{} BAD missing arguments\r\n", tag)
@@ -200,7 +219,7 @@ impl IMAP {
                 let count = db.mail_count().await.context("mail_count failed")?;
                 let count_string = format!("* {} EXISTS\r\n", count).as_bytes().to_vec();
 
-                let expected_uid = db.latest_uid().await.unwrap_or(0) + 1;
+                let expected_uid = db.biggest_uid().await.unwrap_or(0) + 1;
                 let expected_uid_string = format!("* OK [UIDNEXT {}]\r\n", expected_uid)
                     .as_bytes()
                     .to_vec();
@@ -228,13 +247,25 @@ impl IMAP {
                     final_tagged,
                 ];
                 if x == "select" {
-                    self.state = IMAPState::Selected(true);
+                    self.state = IMAPState::Selected(SelectedState {
+                        read_only: false,
+                        //FIX
+                        mailbox_id: 0,
+                        //FIX
+                        user_id: 0,
+                    });
                 } else {
-                    self.state = IMAPState::Selected(false)
+                    self.state = IMAPState::Selected(SelectedState {
+                        read_only: true,
+                        //FIX
+                        user_id: 0,
+                        //FIX
+                        mailbox_id: 0,
+                    })
                 }
                 Ok(response)
             }
-            ("create", IMAPState::Authed) => {
+            ("create", IMAPState::Authed(x)) => {
                 //TODO
                 Ok(vec![format!(
                     "{} NO cannot create multiple mailboxes\r\n",
@@ -243,19 +274,19 @@ impl IMAP {
                 .as_bytes()
                 .to_vec()])
             }
-            ("delete", IMAPState::Authed) => {
+            ("delete", IMAPState::Authed(x)) => {
                 //TODO
                 Ok(vec![format!("{} NO cannot delete mailboxes\r\n", tag)
                     .as_bytes()
                     .to_vec()])
             }
-            ("rename", IMAPState::Authed) => {
+            ("rename", IMAPState::Authed(x)) => {
                 //TODO
                 Ok(vec![format!("{} NO cannot rename mailboxes\r\n", tag)
                     .as_bytes()
                     .to_vec()])
             }
-            ("subscribe", IMAPState::Authed) => {
+            ("subscribe", IMAPState::Authed(x)) => {
                 //TODO
                 Ok(vec![format!(
                     "{} NO cannot subscribe to mailboxes\r\n",
@@ -264,7 +295,7 @@ impl IMAP {
                 .as_bytes()
                 .to_vec()])
             }
-            ("unsubscribe", IMAPState::Authed) => {
+            ("unsubscribe", IMAPState::Authed(x)) => {
                 //TODO
                 Ok(vec![format!(
                     "{} NO cannot unsubscribe from mailboxes\r\n",
@@ -273,31 +304,32 @@ impl IMAP {
                 .as_bytes()
                 .to_vec()])
             }
-            ("list", IMAPState::Authed) => {
+            ("list", IMAPState::Authed(x)) => {
                 //TODO
                 Ok(vec![
                     Self::LIST_CMD.to_vec(),
                     format!("{} OK LIST completed\r\n", tag).as_bytes().to_vec(),
                 ])
             }
-            ("namespace", IMAPState::Authed) => {
+            ("namespace", IMAPState::Authed(x)) => {
                 //TODO
                 Ok(vec![Self::NAMESPACE.to_vec()])
             }
-            ("status", IMAPState::Authed) => {
+            ("status", IMAPState::Authed(x)) => {
                 //TODO
                 Err(anyhow!("not implemented"))
             }
-            ("append", IMAPState::Authed) => {
+            ("append", IMAPState::Authed(x)) => {
                 //TODO
                 Err(anyhow!("not implemented"))
             }
-            ("idle", IMAPState::Authed) => {
+            ("idle", IMAPState::Authed(x)) => {
                 //TODO
                 Err(anyhow!("not implemented"))
             }
             (x, IMAPState::Selected(_)) if x == "close" || x == "unselect" => {
-                self.state = IMAPState::Authed;
+                //FIX
+                self.state = IMAPState::Authed(0);
                 if x == "close" {
                     //TODO: delete pending mail permanently
                 }
@@ -312,7 +344,14 @@ impl IMAP {
                 };
                 Ok(vec![response])
             }
-            ("expunge", IMAPState::Selected(true)) => {
+            (
+                "expunge",
+                IMAPState::Selected(SelectedState {
+                    read_only: false,
+                    user_id: _,
+                    mailbox_id: _,
+                }),
+            ) => {
                 //TODO
                 Err(anyhow!("not implemented"))
             }

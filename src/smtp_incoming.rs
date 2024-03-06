@@ -53,11 +53,16 @@ impl SmtpIncoming {
         match self.state_machine.state {
             SMTPState::Received(mail) => {
                 tracing::info!("got mail!");
-                self.db.lock().await.replicate(mail, false).await?;
+                //FIX
+                self.db.lock().await.replicate(mail, 0).await.map_err(|e| {
+                    tracing::error!("{:?}", e);
+                    e
+                })?;
             }
             SMTPState::ReceivingData(mail) => {
                 tracing::info!("Received EOF before receiving QUIT");
-                self.db.lock().await.replicate(mail, false).await?;
+                //FIX
+                self.db.lock().await.replicate(mail, 0).await?;
             }
             _ => {}
         }
