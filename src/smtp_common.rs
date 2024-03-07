@@ -1,6 +1,13 @@
+use std::result;
+use std::sync::Arc;
+
+use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
 use base64::Engine;
+use tokio::sync::Mutex;
+
+use crate::database;
 
 //naïve
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
@@ -52,7 +59,7 @@ impl SMTPStateMachine {
     }
 
     /// Handles a single SMTP command and returns a proper SMTP response
-    pub fn handle_smtp(&mut self, raw_msg: &str) -> Result<&[u8]> {
+    pub fn handle_smtp_incoming(&mut self, raw_msg: &str) -> Result<&[u8]> {
         tracing::trace!("Received {raw_msg} in state {:?}", self.state);
         let mut msg = raw_msg.split_whitespace();
         let command = msg.next().context("received empty command")?.to_lowercase();
@@ -74,29 +81,6 @@ impl SMTPStateMachine {
             ("rset", _) => {
                 self.state = SMTPState::Fresh;
                 Ok(SMTPStateMachine::KK)
-            }
-            ("auth", _) => {
-                tracing::trace!("Acknowledging AUTH");
-                let auth = msg.nth(1).context("should provide auth info")?;
-                let decoded = crate::utils::DECODER
-                    .decode(auth)
-                    .context("should be valid base64")?;
-                let login = std::str::from_utf8(&decoded[0..])?;
-                if login
-                    == format!(
-                        "\0{}\0{}",
-                        std::env::var("USERNAME")?,
-                        std::env::var("PASSWORD")?
-                    )
-                {
-                    tracing::info!("success!, logged in!");
-                    self.state = SMTPState::Authed;
-                    return Ok(SMTPStateMachine::AUTH_OK);
-                } else {
-                    self.state = SMTPState::Greeted;
-                }
-                tracing::info!("wrong credentials: {login}");
-                Ok(SMTPStateMachine::AUTH_NOT_OK)
             }
             ("mail", curr_state) => {
                 if curr_state == SMTPState::Greeted && self.outgoing {
@@ -170,5 +154,51 @@ impl SMTPStateMachine {
     /// Assumes lowercased.
     fn legal_recipient(to: &str) -> bool {
         !to.contains("admin") && !to.contains("postmaster") && !to.contains("hostmaster")
+    }
+
+    pub async fn handle_smtp_outgoing(
+        &mut self,
+        raw_msg: &str,
+        db: Arc<Mutex<database::Client>>,
+    ) -> Result<&[u8]> {
+        tracing::trace!("Received {raw_msg} in state {:?}", self.state);
+        let mut msg = raw_msg.split_whitespace();
+        let command = msg.next().context("received empty command")?.to_lowercase();
+        match command.as_str() {
+            "auth" => {
+                tracing::trace!("Acknowledging AUTH");
+                let encoded = msg.nth(1).context("should provide auth info")?;
+                match crate::utils::DECODER.decode(encoded) {
+                    Err(_) => {
+                        self.state = SMTPState::Greeted;
+                        Ok(Self::AUTH_NOT_OK)
+                    }
+                    Result::Ok(decoded) => {
+                        let mut strings = decoded
+                            .strip_prefix(b"\0")
+                            .ok_or(anyhow::anyhow!("auth error"))?
+                            .split(|n| n == &0);
+                        let usrname_b = strings.next().ok_or(anyhow::anyhow!("no password"))?;
+                        let usrname = std::str::from_utf8(usrname_b)?;
+                        let password_b = strings.next().ok_or(anyhow::anyhow!("no password"))?;
+                        let password = std::str::from_utf8(password_b)?;
+
+                        let result = db.lock().await.check_user(usrname, password).await;
+
+                        if let Some(_a) = result {
+                            //NOTE _a should be stored to verify that the sender is actually the
+                            //correct person, currently you can send emails on others behalf
+                            //because of this
+                            self.state = SMTPState::Authed;
+                            Ok(Self::AUTH_OK)
+                        } else {
+                            self.state = SMTPState::Greeted;
+                            Ok(Self::AUTH_NOT_OK)
+                        }
+                    }
+                }
+            }
+            _ => self.handle_smtp_incoming(raw_msg),
+        }
     }
 }

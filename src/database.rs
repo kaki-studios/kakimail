@@ -147,6 +147,7 @@ impl Client {
     ///if user doesn't exist or the password is incorrect, returns None
     ///otherwise returns the users id
     pub async fn check_user(&self, username: &str, password: &str) -> Option<i32> {
+        //this fn needs testing
         let values = self
             .db
             .execute(Statement::with_args(
@@ -155,12 +156,15 @@ impl Client {
             ))
             .await
             .ok()?;
+        dbg!("ok1");
         //fighting with the compiler
         let mut values = values.rows.first()?.values.iter();
+        dbg!("ok2");
         let id = i32::try_from(values.next()?).ok()?;
-        let Value::Text { value: hash } = values.next()? else {
+        let Value::Blob { value: hash } = values.next()? else {
             return None;
         };
+        let hash = std::str::from_utf8(hash).ok()?;
 
         if !bcrypt::verify(password, hash).ok()? {
             Option::None

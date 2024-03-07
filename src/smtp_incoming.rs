@@ -36,11 +36,11 @@ impl SmtpIncoming {
 
             if n == 0 {
                 tracing::info!("Received EOF");
-                self.state_machine.handle_smtp("quit").ok();
+                self.state_machine.handle_smtp_incoming("quit").ok();
                 break;
             }
             let msg = std::str::from_utf8(&buf[0..n])?;
-            let response = self.state_machine.handle_smtp(msg)?;
+            let response = self.state_machine.handle_smtp_incoming(msg)?;
             if response != SMTPStateMachine::HOLD_YOUR_HORSES {
                 self.stream.write_all(response).await?;
             } else {

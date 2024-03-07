@@ -33,11 +33,17 @@ impl SmtpOutgoing {
             let n = self.stream.read(&mut buf).await?;
             if n == 0 {
                 tracing::info!("Received EOF");
-                self.state_machine.handle_smtp("quit").ok();
+                self.state_machine
+                    //not handling auth so don't need handle_smtp_outgoing()
+                    .handle_smtp_incoming("quit")
+                    .ok();
                 break;
             }
             let msg = std::str::from_utf8(&buf[0..n])?;
-            let response = self.state_machine.handle_smtp(msg)?;
+            let response = self
+                .state_machine
+                .handle_smtp_outgoing(msg, self.db.clone())
+                .await?;
             if response != SMTPStateMachine::HOLD_YOUR_HORSES {
                 self.stream.write_all(response).await?;
             } else {

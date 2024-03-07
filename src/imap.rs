@@ -7,7 +7,7 @@ use tokio::{
     sync::Mutex,
 };
 
-use crate::database;
+use crate::{database, smtp_common};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd)]
 enum IMAPState {
@@ -117,18 +117,18 @@ impl IMAP {
                 Ok(vec![value.as_bytes().to_vec()])
             }
             ("login", IMAPState::NotAuthed) => {
-                let username = msg.next().context("should provide username")?;
+                let mut username = msg.next().context("should provide username")?;
                 let mut password = msg.next().context("should provice password")?;
                 //NOTE: python's imaplib submits passwords enclosed like this: \"password\"
                 //so we will need to remove them
                 //NOTE: this approach does't support passwords with spaces, but I think that's ok
                 //for now
                 password = &password[1..password.len() - 1];
-                if username == std::env::var("USERNAME")? && password == std::env::var("PASSWORD")?
-                {
+                username = &username[1..username.len() - 1];
+                dbg!(&username, &password);
+                if let Some(x) = self.db.lock().await.check_user(username, password).await {
                     let good_msg = format!("{} OK LOGIN COMPLETED\r\n", tag);
-                    //FIX
-                    self.state = IMAPState::Authed(0);
+                    self.state = IMAPState::Authed(x);
                     Ok(vec![good_msg.as_bytes().to_vec()])
                 } else {
                     let bad_msg = format!("{} NO LOGIN INVALID\r\n", tag);
