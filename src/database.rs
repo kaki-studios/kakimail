@@ -38,11 +38,11 @@ impl Client {
         //MAILBOX TABLE
         db.batch([
             "PRAGMA foreign_keys = ON",
-            "CREATE TABLE IF NOT EXISTS mailboxes (mid integer primary key not null, user_id integer not null, flags integer, FOREIGN KEY(user_id) REFERENCES users(id));",
+            "CREATE TABLE IF NOT EXISTS mailboxes (id integer primary key not null, name text, user_id integer not null, flags integer, FOREIGN KEY(user_id) REFERENCES users(id));",
             "CREATE INDEX IF NOT EXISTS mailbox_foreign_key ON mailboxes(user_id);",
-            "CREATE INDEX IF NOT EXISTS mailbox_id ON mailboxes(mid);",
+            "CREATE INDEX IF NOT EXISTS mailbox_id ON mailboxes(id);",
             //TESTING PURPOSES ONLY
-            "INSERT OR IGNORE INTO mailboxes VALUES (0, 0, 0)"
+            "INSERT OR IGNORE INTO mailboxes VALUES (0, 'INBOX', 0, 0)"
         ])
         .await.map_err(|e| {
                 tracing::error!("2. {:?}", e);
@@ -117,7 +117,7 @@ impl Client {
         let a_week_ago = now - chrono::Duration::days(7);
         let a_week_ago = &a_week_ago.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
         tracing::trace!("Deleting old mail from before {a_week_ago}");
-        let count = self.mail_count().await.unwrap_or(0);
+        let count = self.mail_count(None).await.unwrap_or(0);
         tracing::debug!("Found {count} old mail");
 
         self.db
@@ -129,10 +129,18 @@ impl Client {
             .ok();
         Ok(())
     }
-    pub async fn mail_count(&self) -> Result<i64> {
+    ///mailbox_id is none if you want all mail from all mailboxes
+    pub async fn mail_count(&self, mailbox_id: Option<i32>) -> Result<i64> {
+        let statement = match mailbox_id {
+            Some(x) => Statement::with_args(
+                "SELECT COUNT(*) FROM MAIL WHERE mailbox_id = ?",
+                libsql_client::args!(x),
+            ),
+            None => Statement::new("SELECT COUNT(*) FROM mail"),
+        };
         i64::try_from(
             self.db
-                .execute(Statement::new("SELECT COUNT(*) FROM mail"))
+                .execute(statement)
                 .await?
                 .rows
                 .first()
@@ -143,11 +151,63 @@ impl Client {
         )
         .map_err(|e| anyhow!(e))
     }
+    pub async fn get_mailbox_id(&self, user_id: i32, mailbox_name: &str) -> Result<i32> {
+        if let Ok(x) = self.get_mailbox_id_no_inbox(user_id, mailbox_name).await {
+            return Ok(x);
+        }
+        if mailbox_name != "INBOX" {
+            return Err(anyhow!("no such mailbox"));
+        }
+        //we need to create the inbox mailbox bc it must exist
+        self.db
+            .execute(Statement::with_args(
+                "INSERT INTO mailboxes(name, user_id, flags) VALUES(?, ?, 0)",
+                libsql_client::args!(mailbox_name, user_id),
+            ))
+            .await?;
+        let result = self
+            .db
+            .execute(Statement::new("select last_insert_rowid()"))
+            .await?;
+        let result = result
+            .rows
+            .first()
+            .ok_or(anyhow!("no rows"))?
+            .values
+            .first()
+            .ok_or(anyhow!("no values"))?;
+        if let Value::Integer { value: x } = result {
+            return Ok(*x as i32);
+        }
+
+        return Err(anyhow!("No such mailbox"));
+    }
+    async fn get_mailbox_id_no_inbox(&self, user_id: i32, mailbox_name: &str) -> Result<i32> {
+        let result = self
+            .db
+            .execute(Statement::with_args(
+                "SELECT id FROM mailboxes WHERE user_id = ? AND name = ?",
+                libsql_client::args!(user_id, mailbox_name),
+            ))
+            .await?;
+        //fighting the compiler
+        let result = result
+            .rows
+            .first()
+            .ok_or(anyhow!("no rows found"))?
+            .values
+            .first()
+            .ok_or(anyhow!("no data found"))?;
+        if let Value::Integer { value: x } = result {
+            return Ok(*x as i32);
+        }
+        Err(anyhow!("wrong datatype"))
+    }
+
     ///used with plain auth
     ///if user doesn't exist or the password is incorrect, returns None
     ///otherwise returns the users id
     pub async fn check_user(&self, username: &str, password: &str) -> Option<i32> {
-        //this fn needs testing
         let values = self
             .db
             .execute(Statement::with_args(

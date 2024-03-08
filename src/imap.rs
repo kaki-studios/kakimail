@@ -70,7 +70,7 @@ impl IMAP {
                     let usrname = std::str::from_utf8(usrname_b)?;
                     let password_b = strings.next().ok_or(anyhow!("no password"))?;
                     let password = std::str::from_utf8(password_b)?;
-
+                    dbg!(&usrname, &password);
                     let result = self.db.lock().await.check_user(usrname, password).await;
 
                     if let Some(a) = result {
@@ -185,12 +185,11 @@ impl IMAP {
                     }
                 }
             }
-            //FIX why is there a 0
-            ("enable", x) if x >= IMAPState::Authed(0) => {
+            ("enable", IMAPState::Authed(_)) => {
                 let response = format!("{} BAD NO EXTENSIONS SUPPORTED\r\n", tag);
                 Ok(vec![response.as_bytes().to_vec()])
             }
-            (x, IMAPState::Authed(y)) if x == "select" || x == "examine" => {
+            (x, IMAPState::Authed(id)) if x == "select" || x == "examine" => {
                 let mailbox = match msg.next().context("should provide mailbox name") {
                     Err(_) => {
                         return Ok(vec![format!("{} BAD missing arguments\r\n", tag)
@@ -199,12 +198,15 @@ impl IMAP {
                     }
                     Result::Ok(a) => a,
                 };
-                //NOTE: only one mailbox for now idk
-                if mailbox != "INBOX" {
-                    return Ok(vec![format!("{} NO no such mailbox\r\n", tag)
-                        .as_bytes()
-                        .to_vec()]);
-                }
+                let db = self.db.lock().await;
+
+                let m_id = match db.get_mailbox_id(id, mailbox).await {
+                    Err(x) => {
+                        return Ok(vec![format!("{} BAD {}\r\n", tag, x).as_bytes().to_vec()])
+                    }
+                    Result::Ok(a) => a,
+                };
+
                 let unix_time = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .context("Time shouldn't go backwards")?;
@@ -214,9 +216,10 @@ impl IMAP {
                     .as_bytes()
                     .to_vec();
 
-                let db = self.db.lock().await;
-
-                let count = db.mail_count().await.context("mail_count failed")?;
+                let count = db
+                    .mail_count(Some(m_id))
+                    .await
+                    .context("mail_count failed")?;
                 let count_string = format!("* {} EXISTS\r\n", count).as_bytes().to_vec();
 
                 let expected_uid = db.biggest_uid().await.unwrap_or(0) + 1;
@@ -249,18 +252,14 @@ impl IMAP {
                 if x == "select" {
                     self.state = IMAPState::Selected(SelectedState {
                         read_only: false,
-                        //FIX
-                        mailbox_id: 0,
-                        //FIX
-                        user_id: 0,
+                        user_id: id,
+                        mailbox_id: m_id,
                     });
                 } else {
                     self.state = IMAPState::Selected(SelectedState {
                         read_only: true,
-                        //FIX
-                        user_id: 0,
-                        //FIX
-                        mailbox_id: 0,
+                        user_id: id,
+                        mailbox_id: m_id,
                     })
                 }
                 Ok(response)
