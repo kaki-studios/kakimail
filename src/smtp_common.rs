@@ -8,6 +8,7 @@ use base64::Engine;
 use tokio::sync::Mutex;
 
 use crate::database;
+use crate::utils;
 
 //naïve
 #[derive(Default, Clone, Debug, PartialEq, Eq)]
@@ -174,19 +175,12 @@ impl SMTPStateMachine {
                         Ok(Self::AUTH_NOT_OK)
                     }
                     Result::Ok(decoded) => {
-                        let mut strings = decoded
-                            .strip_prefix(b"\0")
-                            .ok_or(anyhow::anyhow!("auth error"))?
-                            .split(|n| n == &0);
-                        let usrname_b = strings.next().ok_or(anyhow::anyhow!("no password"))?;
-                        let usrname = std::str::from_utf8(usrname_b)?;
-                        let password_b = strings.next().ok_or(anyhow::anyhow!("no password"))?;
-                        let password = std::str::from_utf8(password_b)?;
+                        let (usrname, password) = utils::seperate_login(decoded)?;
 
-                        let result = db.lock().await.check_user(usrname, password).await;
+                        let result = db.lock().await.check_user(&usrname, &password).await;
 
                         if let Some(_a) = result {
-                            //NOTE _a should be stored to verify that the sender is actually the
+                            //FIX _a should be stored to verify that the sender is actually the
                             //correct person, currently you can send emails on others behalf
                             //because of this
                             self.state = SMTPState::Authed;

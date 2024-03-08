@@ -48,3 +48,15 @@ impl DnsResolver {
         }
     }
 }
+
+pub fn seperate_login(input: Vec<u8>) -> Result<(String, String)> {
+    let mut strings = input
+        .strip_prefix(b"\0")
+        .ok_or(anyhow::anyhow!("auth error"))?
+        .split(|n| n == &0);
+    let usrname_b = strings.next().ok_or(anyhow::anyhow!("no password"))?;
+    let usrname = String::from_utf8(usrname_b.to_vec())?;
+    let password_b = strings.next().ok_or(anyhow::anyhow!("no password"))?;
+    let password = String::from_utf8(password_b.to_vec())?;
+    Ok((usrname, password))
+}

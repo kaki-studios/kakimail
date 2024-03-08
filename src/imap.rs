@@ -7,7 +7,7 @@ use tokio::{
     sync::Mutex,
 };
 
-use crate::{database, smtp_common};
+use crate::{database, smtp_common, utils};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd)]
 enum IMAPState {
@@ -62,16 +62,8 @@ impl IMAP {
                     .as_bytes()
                     .to_vec()]),
                 Result::Ok(decoded) => {
-                    let mut strings = decoded
-                        .strip_prefix(b"\0")
-                        .ok_or(anyhow!("auth error line 151"))?
-                        .split(|n| n == &0);
-                    let usrname_b = strings.next().ok_or(anyhow!("no password"))?;
-                    let usrname = std::str::from_utf8(usrname_b)?;
-                    let password_b = strings.next().ok_or(anyhow!("no password"))?;
-                    let password = std::str::from_utf8(password_b)?;
-                    dbg!(&usrname, &password);
-                    let result = self.db.lock().await.check_user(usrname, password).await;
+                    let (usrname, password) = utils::seperate_login(decoded)?;
+                    let result = self.db.lock().await.check_user(&usrname, &password).await;
 
                     if let Some(a) = result {
                         self.state = IMAPState::Authed(a);
@@ -160,17 +152,10 @@ impl IMAP {
                                 .as_bytes()
                                 .to_vec()]),
                             Result::Ok(decoded) => {
-                                let mut strings = decoded
-                                    .strip_prefix(b"\0")
-                                    .ok_or(anyhow!("auth error line 151"))?
-                                    .split(|n| n == &0);
-                                let usrname_b = strings.next().ok_or(anyhow!("no password"))?;
-                                let usrname = std::str::from_utf8(usrname_b)?;
-                                let password_b = strings.next().ok_or(anyhow!("no password"))?;
-                                let password = std::str::from_utf8(password_b)?;
+                                let (usrname, password) = utils::seperate_login(decoded)?;
 
                                 let result =
-                                    self.db.lock().await.check_user(usrname, password).await;
+                                    self.db.lock().await.check_user(&usrname, &password).await;
 
                                 if let Some(a) = result {
                                     self.state = IMAPState::Authed(a);
