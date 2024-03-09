@@ -232,6 +232,22 @@ impl Client {
             Some(id)
         }
     }
+    pub async fn get_user_id(&self, username: &str) -> Option<i32> {
+        let values = &self
+            .db
+            .execute(Statement::with_args(
+                "SELECT _rowid_ from users WHERE name = ?",
+                libsql_client::args!(username),
+            ))
+            .await
+            .ok()?;
+        let values = values.rows.first()?.values.first()?;
+        if let Value::Integer { value: x } = values {
+            return Some(*x as i32);
+        }
+
+        None
+    }
 }
 
 pub enum IMAPFlag {

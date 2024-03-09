@@ -13,15 +13,17 @@ pub struct SmtpIncoming {
     pub stream: tokio::net::TcpStream,
     pub state_machine: SMTPStateMachine,
     pub db: Arc<Mutex<database::Client>>,
+    pub domain: String,
 }
 
 impl SmtpIncoming {
     /// Creates a new server from a connected stream
-    pub async fn new(domain: impl AsRef<str>, stream: tokio::net::TcpStream) -> Result<Self> {
+    pub async fn new(domain: String, stream: tokio::net::TcpStream) -> Result<Self> {
         Ok(Self {
             stream,
-            state_machine: SMTPStateMachine::new(domain, false),
+            state_machine: SMTPStateMachine::new(domain.clone(), false),
             db: Arc::new(Mutex::new(database::Client::new().await?)),
+            domain,
         })
     }
 
@@ -51,20 +53,42 @@ impl SmtpIncoming {
             }
         }
         match self.state_machine.state {
-            SMTPState::Received(mail) => {
+            SMTPState::Received(ref mail, _) => {
                 tracing::info!("got mail!");
-                //FIX
-                self.db.lock().await.replicate(mail, 0).await.map_err(|e| {
-                    tracing::error!("{:?}", e);
-                    e
-                })?;
+                self.store_mail(mail).await?;
             }
-            SMTPState::ReceivingData(mail) => {
+            SMTPState::ReceivingData(ref mail, _) => {
                 tracing::info!("Received EOF before receiving QUIT");
-                //FIX
-                self.db.lock().await.replicate(mail, 0).await?;
+                self.store_mail(mail).await?;
             }
             _ => {}
+        }
+        Ok(())
+    }
+
+    async fn store_mail(&self, mail: &Mail) -> Result<()> {
+        // self.db.lock().await.replicate(mail, 0).await.map_err(|e| {
+        //     tracing::error!("{:?}", e);
+        //     e
+        // })?;
+        for i in &mail.to {
+            //go from <user@domain.com> to user@domain.com. strip the angle brackets
+            let i = &i[1..i.len() - 1];
+            let mut parts = i.split("@").into_iter();
+            let Some(user) = parts.next() else {
+                continue;
+            };
+            let Some(domain) = parts.next() else {
+                continue;
+            };
+            dbg!(user, domain);
+            if domain != self.domain {
+                continue;
+            }
+
+            //TODO
+            //db.get_user_id()!!!
+            //if domail == our domain, replicate it. if no user found, continue.
         }
         Ok(())
     }

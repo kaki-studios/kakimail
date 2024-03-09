@@ -4,6 +4,7 @@ use crate::database;
 use crate::smtp_common::SMTPState;
 use crate::smtp_common::SMTPStateMachine;
 use crate::utils;
+use anyhow::Context;
 use anyhow::Result;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -54,19 +55,25 @@ impl SmtpOutgoing {
             }
         }
         match self.state_machine.state {
-            SMTPState::Received(mail) => {
+            SMTPState::Received(mail, x) => {
                 //send mail, everything was succesful!
                 SmtpOutgoing::send_mail(&mail).await.map_err(|e| {
                     tracing::error!("{:?}", e);
                     e
                 })?;
                 //FIX
-                self.db.lock().await.replicate(mail, 0).await?;
+                let id = self
+                    .db
+                    .lock()
+                    .await
+                    .get_mailbox_id(x.context("should exist")?, "INBOX")
+                    .await?;
+                self.db.lock().await.replicate(mail, id).await?;
             }
-            SMTPState::ReceivingData(mail) => {
+            SMTPState::ReceivingData(mail, x) => {
                 //TODO: should probably still send mail idk
                 tracing::info!("Received EOF before receiving QUIT");
-                tracing::info!("{:?}", mail);
+                tracing::info!("{:?}", (mail, x));
             }
             _ => {}
         }

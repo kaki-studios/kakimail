@@ -21,10 +21,10 @@ pub struct Mail {
 pub enum SMTPState {
     Fresh,
     Greeted,
-    Authed,
-    ReceivingRcpt(Mail),
-    ReceivingData(Mail),
-    Received(Mail),
+    Authed(i32),
+    ReceivingRcpt(Mail, Option<i32>),
+    ReceivingData(Mail, Option<i32>),
+    Received(Mail, Option<i32>),
 }
 
 pub struct SMTPStateMachine {
@@ -84,22 +84,38 @@ impl SMTPStateMachine {
                 Ok(SMTPStateMachine::KK)
             }
             ("mail", curr_state) => {
-                if curr_state == SMTPState::Greeted && self.outgoing {
-                    tracing::warn!("Didn't sign in!");
-                    return Ok(SMTPStateMachine::NOT_AUTHED_YET);
-                }
                 tracing::trace!("Receiving MAIL");
                 let from = msg.next().context("received empty MAIL")?;
                 let from = from
                     .strip_prefix("FROM:")
                     .context("received incorrect MAIL")?;
-                self.state = SMTPState::ReceivingRcpt(Mail {
-                    from: from.to_string(),
-                    ..Default::default()
-                });
+                if self.outgoing {
+                    if let SMTPState::Authed(x) = curr_state {
+                        self.state = SMTPState::ReceivingRcpt(
+                            Mail {
+                                from: from.to_string(),
+
+                                ..Default::default()
+                            },
+                            Some(x),
+                        );
+                    } else {
+                        tracing::warn!("Didn't sign in!");
+                        return Ok(SMTPStateMachine::NOT_AUTHED_YET);
+                    }
+                } else {
+                    self.state = SMTPState::ReceivingRcpt(
+                        Mail {
+                            from: from.to_string(),
+
+                            ..Default::default()
+                        },
+                        None,
+                    );
+                }
                 Ok(SMTPStateMachine::KK)
             }
-            ("rcpt", SMTPState::ReceivingRcpt(mut mail)) => {
+            ("rcpt", SMTPState::ReceivingRcpt(mut mail, x)) => {
                 tracing::trace!("Receiving rcpt");
                 let to = msg.next().context("received empty RCPT")?;
                 let to = to.strip_prefix("TO:").context("received incorrect RCPT")?;
@@ -109,29 +125,29 @@ impl SMTPStateMachine {
                 } else {
                     tracing::warn!("Illegal recipient: {to}")
                 }
-                self.state = SMTPState::ReceivingRcpt(mail);
+                self.state = SMTPState::ReceivingRcpt(mail, x);
                 Ok(SMTPStateMachine::KK)
             }
-            ("data", SMTPState::ReceivingRcpt(mail)) => {
+            ("data", SMTPState::ReceivingRcpt(mail, x)) => {
                 tracing::trace!("Receiving data");
-                self.state = SMTPState::ReceivingData(mail);
+                self.state = SMTPState::ReceivingData(mail, x);
                 Ok(SMTPStateMachine::SEND_DATA_PLZ)
             }
-            ("quit", SMTPState::ReceivingData(mail)) => {
+            ("quit", SMTPState::ReceivingData(mail, x)) => {
                 tracing::trace!(
                     "Received data: FROM: {} TO:{} DATA:{}",
                     mail.from,
                     mail.to.join(", "),
                     mail.data
                 );
-                self.state = SMTPState::Received(mail);
+                self.state = SMTPState::Received(mail, x);
                 Ok(SMTPStateMachine::KTHXBYE)
             }
             ("quit", _) => {
                 tracing::warn!("Received quit before getting any data");
                 Ok(SMTPStateMachine::KTHXBYE)
             }
-            (_, SMTPState::ReceivingData(mut mail)) => {
+            (_, SMTPState::ReceivingData(mut mail, x)) => {
                 tracing::trace!("Receiving data");
                 let resp = if raw_msg.ends_with("\r\n.\r\n") {
                     SMTPStateMachine::KK
@@ -139,7 +155,7 @@ impl SMTPStateMachine {
                     SMTPStateMachine::HOLD_YOUR_HORSES
                 };
                 mail.data += &raw_msg;
-                self.state = SMTPState::ReceivingData(mail);
+                self.state = SMTPState::ReceivingData(mail, x);
                 Ok(resp)
             }
             _ => anyhow::bail!(
@@ -183,7 +199,8 @@ impl SMTPStateMachine {
                             //FIX _a should be stored to verify that the sender is actually the
                             //correct person, currently you can send emails on others behalf
                             //because of this
-                            self.state = SMTPState::Authed;
+
+                            self.state = SMTPState::Authed(_a);
                             Ok(Self::AUTH_OK)
                         } else {
                             self.state = SMTPState::Greeted;
