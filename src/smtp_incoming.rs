@@ -19,11 +19,13 @@ pub struct SmtpIncoming {
 impl SmtpIncoming {
     /// Creates a new server from a connected stream
     pub async fn new(domain: String, stream: tokio::net::TcpStream) -> Result<Self> {
+        //go from smtp.kaki.foo to kaki.foo
+        let domain_stripped = domain.split(".").collect::<Vec<&str>>()[1..].join(".");
         Ok(Self {
             stream,
             state_machine: SMTPStateMachine::new(domain.clone(), false),
             db: Arc::new(Mutex::new(database::Client::new().await?)),
-            domain,
+            domain: domain_stripped,
         })
     }
 
@@ -55,22 +57,19 @@ impl SmtpIncoming {
         match self.state_machine.state {
             SMTPState::Received(ref mail, _) => {
                 tracing::info!("got mail!");
-                self.store_mail(mail).await?;
+                self.store_mail(mail).await;
             }
             SMTPState::ReceivingData(ref mail, _) => {
                 tracing::info!("Received EOF before receiving QUIT");
-                self.store_mail(mail).await?;
+                self.store_mail(mail).await;
             }
             _ => {}
         }
         Ok(())
     }
-
-    async fn store_mail(&self, mail: &Mail) -> Result<()> {
-        // self.db.lock().await.replicate(mail, 0).await.map_err(|e| {
-        //     tracing::error!("{:?}", e);
-        //     e
-        // })?;
+    ///saves the mail in the recipients' INBOXes
+    async fn store_mail(&self, mail: &Mail) {
+        let db = self.db.lock().await;
         for i in &mail.to {
             //go from <user@domain.com> to user@domain.com. strip the angle brackets
             let i = &i[1..i.len() - 1];
@@ -85,12 +84,20 @@ impl SmtpIncoming {
             if domain != self.domain {
                 continue;
             }
-
-            //TODO
-            //db.get_user_id()!!!
-            //if domail == our domain, replicate it. if no user found, continue.
+            let Some(user_id) = db.get_user_id(user).await else {
+                continue;
+            };
+            let Some(m_id) = db.get_mailbox_id(user_id, "INBOX").await.ok() else {
+                continue;
+            };
+            db.replicate(mail.clone(), m_id)
+                .await
+                .map_err(|e| {
+                    tracing::error!("{}", e);
+                    e
+                })
+                .ok();
         }
-        Ok(())
     }
 
     /// Sends the initial SMTP greeting

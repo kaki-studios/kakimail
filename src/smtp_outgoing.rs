@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::database;
+use crate::smtp_common::Mail;
 use crate::smtp_common::SMTPState;
 use crate::smtp_common::SMTPStateMachine;
 use crate::utils;
@@ -55,30 +56,29 @@ impl SmtpOutgoing {
             }
         }
         match self.state_machine.state {
-            SMTPState::Received(mail, x) => {
+            SMTPState::Received(ref mail, id) => {
                 //send mail, everything was succesful!
-                SmtpOutgoing::send_mail(&mail).await.map_err(|e| {
-                    tracing::error!("{:?}", e);
-                    e
-                })?;
-                //FIX
-                let id = self
-                    .db
-                    .lock()
-                    .await
-                    .get_mailbox_id(x.context("should exist")?, "INBOX")
-                    .await?;
-                self.db.lock().await.replicate(mail, id).await?;
+                self.handle_mail(mail, id.context("should exist")?).await?;
             }
-            SMTPState::ReceivingData(mail, x) => {
-                //TODO: should probably still send mail idk
+            SMTPState::ReceivingData(ref mail, x) => {
                 tracing::info!("Received EOF before receiving QUIT");
                 tracing::info!("{:?}", (mail, x));
+                self.handle_mail(mail, x.context("should exist")?).await?;
             }
             _ => {}
         }
         Ok(())
     }
+    async fn handle_mail(&self, mail: &Mail, id: i32) -> Result<()> {
+        SmtpOutgoing::send_mail(&mail).await.map_err(|e| {
+            tracing::error!("{:?}", e);
+            e
+        })?;
+        let id = self.db.lock().await.get_mailbox_id(id, "INBOX").await?;
+        self.db.lock().await.replicate(mail.clone(), id).await?;
+        Ok(())
+    }
+
     /// Sends the initial SMTP greeting
     async fn greet(&mut self) -> Result<()> {
         self.stream

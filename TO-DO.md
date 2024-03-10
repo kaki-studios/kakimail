@@ -8,12 +8,11 @@
 - [X] some kind of database
 - [ ] IMAP
     - [ ] split `imap.rs` into multiple files
-    - [ ] support for multiple mailboxes and namespacing (see next example)
+    - [x] support for multiple mailboxes and namespacing (see next example)
     - [ ] support for command arguments inside quotes, eg `A000 SUBSCRIBE "Personal/School Stuff"`
-    - (These 2 things need database schema refactoring 😢)
 - [ ] support for some SMTP extensions **MOST NOTABLY STARTTLS**
 - [ ] support for implicit tls ports
-- [ ] TLS with [rustls](https://crates.io/crates/rustls)
+- [ ] TLS with [tokio-rustls](https://crates.io/crates/tokio-rustls)
 
 
 

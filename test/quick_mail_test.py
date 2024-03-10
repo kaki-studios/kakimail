@@ -5,7 +5,7 @@ import sys
 
 
 from_addr = "testfrom@example.com"
-to_addr = ["testto1@kaki.foo", "testto2@kaki.foo"]
+to_addr = ["test1@kaki.foo", "test2@kaki.foo"]
 
 # Add the From: and To: headers at the start!
 msg = f"From: {from_addr}\r\nTo: {to_addr}\r\n\r\n"

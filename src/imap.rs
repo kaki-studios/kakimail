@@ -3,11 +3,11 @@ use std::sync::Arc;
 use anyhow::{anyhow, Context, Ok, Result};
 use base64::Engine;
 use tokio::{
-    io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWriteExt},
     sync::Mutex,
 };
 
-use crate::{database, smtp_common, utils};
+use crate::{database, utils};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd)]
 enum IMAPState {
@@ -42,8 +42,6 @@ impl IMAP {
     const NAMESPACE: &'static [u8] = b"* NAMESPACE ((\"\" \"/\")) NIL NIL\r\n";
     const NO_PERMANENT_FLAGS: &'static [u8] =
         b"* OK [PERMANENTFLAGS ()] No permanent flags permitted\r\n";
-    ///shouldn't exist in the future
-    const LIST_CMD: &'static [u8] = b"* LIST () \"/\" INBOX\r\n";
 
     /// Creates a new server from a connected stream
     pub async fn new(stream: tokio::net::TcpStream) -> Result<Self> {
@@ -63,6 +61,7 @@ impl IMAP {
                     .to_vec()]),
                 Result::Ok(decoded) => {
                     let (usrname, password) = utils::seperate_login(decoded)?;
+                    dbg!(&usrname, &password);
                     let result = self.db.lock().await.check_user(&usrname, &password).await;
 
                     if let Some(a) = result {
@@ -181,11 +180,11 @@ impl IMAP {
                             .as_bytes()
                             .to_vec()])
                     }
-                    Result::Ok(a) => a,
+                    Result::Ok(a) => a.chars().filter(|c| c != &'"').collect::<String>(),
                 };
                 let db = self.db.lock().await;
 
-                let m_id = match db.get_mailbox_id(id, mailbox).await {
+                let m_id = match db.get_mailbox_id(id, &mailbox).await {
                     Err(x) => {
                         return Ok(vec![format!("{} BAD {}\r\n", tag, x).as_bytes().to_vec()])
                     }
@@ -225,13 +224,16 @@ impl IMAP {
                 } else {
                     Self::NO_PERMANENT_FLAGS
                 };
+                let mailbox_list = format!("* LIST () \"/\" {}\r\n", mailbox)
+                    .as_bytes()
+                    .to_vec();
                 let response = vec![
                     count_string,
                     uid_validity,
                     expected_uid_string,
                     Self::FLAGS.to_vec(),
+                    mailbox_list,
                     permanent_flags.to_vec(),
-                    Self::LIST_CMD.to_vec(),
                     final_tagged,
                 ];
                 if x == "select" {
@@ -249,28 +251,57 @@ impl IMAP {
                 }
                 Ok(response)
             }
-            ("create", IMAPState::Authed(x)) => {
-                //TODO
-                Ok(vec![format!(
-                    "{} NO cannot create multiple mailboxes\r\n",
-                    tag
-                )
-                .as_bytes()
-                .to_vec()])
-            }
-            ("delete", IMAPState::Authed(x)) => {
-                //TODO
-                Ok(vec![format!("{} NO cannot delete mailboxes\r\n", tag)
+            ("create", IMAPState::Authed(id)) => {
+                let Some(mailbox_name) = msg.next() else {
+                    return Ok(vec![format!("{} BAD didn't provide a name\r\n", tag)
+                        .as_bytes()
+                        .to_vec()]);
+                };
+                self.db
+                    .lock()
+                    .await
+                    .create_mailbox(id, mailbox_name)
+                    .await?;
+
+                Ok(vec![format!("{} OK CREATE completed\r\n", tag)
                     .as_bytes()
                     .to_vec()])
             }
-            ("rename", IMAPState::Authed(x)) => {
-                //TODO
-                Ok(vec![format!("{} NO cannot rename mailboxes\r\n", tag)
+            ("delete", IMAPState::Authed(id)) => {
+                let Some(mailbox_name) = msg.next() else {
+                    return Ok(vec![format!("{} BAD didn't provide a name\r\n", tag)
+                        .as_bytes()
+                        .to_vec()]);
+                };
+                let db = self.db.lock().await;
+                let mailbox_id = db.get_mailbox_id(id, mailbox_name).await?;
+                db.delete_mailbox(mailbox_id).await?;
+                Ok(vec![format!("{} OK DELETE completed\r\n", tag)
                     .as_bytes()
                     .to_vec()])
             }
-            ("subscribe", IMAPState::Authed(x)) => {
+            ("rename", IMAPState::Authed(id)) => {
+                let Some(mailbox_name) = msg.next() else {
+                    return Ok(vec![format!("{} BAD didn't provide a name\r\n", tag)
+                        .as_bytes()
+                        .to_vec()]);
+                };
+                let db = self.db.lock().await;
+                let Result::Ok(mailbox_id) = db.get_mailbox_id(id, mailbox_name).await else {
+                    return Ok(vec![format!("{} BAD no such mailbox\r\n", tag)
+                        .as_bytes()
+                        .to_vec()]);
+                };
+                db.rename_mailbox(mailbox_name, mailbox_id).await?;
+                if mailbox_name == "INBOX" {
+                    //as per the rfc
+                    db.create_mailbox(id, "INBOX").await?;
+                }
+                Ok(vec![format!("{} OK RENAME completed\r\n", tag)
+                    .as_bytes()
+                    .to_vec()])
+            }
+            ("subscribe", IMAPState::Authed(id)) => {
                 //TODO
                 Ok(vec![format!(
                     "{} NO cannot subscribe to mailboxes\r\n",
@@ -288,19 +319,32 @@ impl IMAP {
                 .as_bytes()
                 .to_vec()])
             }
-            ("list", IMAPState::Authed(x)) => {
-                //TODO
-                Ok(vec![
-                    Self::LIST_CMD.to_vec(),
-                    format!("{} OK LIST completed\r\n", tag).as_bytes().to_vec(),
-                ])
+            ("list", IMAPState::Authed(id)) => {
+                let mut mailboxes = self
+                    .db
+                    .lock()
+                    .await
+                    .get_mailbox_names_for_user(id)
+                    .await
+                    .context(anyhow!("couldn't get mailbox names"))?;
+                mailboxes = mailboxes
+                    .iter()
+                    .map(|v| format!("* LIST () \"/\" {}\r\n", v))
+                    .collect();
+                mailboxes.push(format!("{} OK LIST completed\r\n", tag));
+                let mailboxes = mailboxes
+                    .iter()
+                    .map(|e| e.as_bytes().to_vec())
+                    .collect::<Vec<Vec<u8>>>();
+
+                Ok(mailboxes)
             }
             ("namespace", IMAPState::Authed(x)) => {
                 //TODO
                 Ok(vec![Self::NAMESPACE.to_vec()])
             }
             ("status", IMAPState::Authed(x)) => {
-                //TODO
+                //TODO!! easiest of them all rn
                 Err(anyhow!("not implemented"))
             }
             ("append", IMAPState::Authed(x)) => {
@@ -311,10 +355,9 @@ impl IMAP {
                 //TODO
                 Err(anyhow!("not implemented"))
             }
-            (x, IMAPState::Selected(_)) if x == "close" || x == "unselect" => {
-                //FIX
-                self.state = IMAPState::Authed(0);
-                if x == "close" {
+            (x, IMAPState::Selected(y)) if x == "close" || x == "unselect" => {
+                self.state = IMAPState::Authed(y.user_id);
+                if x == "close" && !y.read_only {
                     //TODO: delete pending mail permanently
                 }
                 let response = if x == "close" {
@@ -333,11 +376,14 @@ impl IMAP {
                 IMAPState::Selected(SelectedState {
                     read_only: false,
                     user_id: _,
-                    mailbox_id: _,
+                    mailbox_id: x,
                 }),
             ) => {
-                //TODO
-                Err(anyhow!("not implemented"))
+                //TODO tell the uids of deleted messages like the rfc
+                self.db.lock().await.expunge(x).await?;
+                Ok(vec![format!("{} OK EXPUNGE completed\r\n", tag)
+                    .as_bytes()
+                    .to_vec()])
             }
             ("search", IMAPState::Selected(_)) => {
                 //TODO

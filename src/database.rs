@@ -1,6 +1,6 @@
 use crate::smtp_common::Mail;
 use anyhow::{anyhow, Context, Result};
-use libsql_client::{client::GenericClient, DatabaseClient, Statement, Value};
+use libsql_client::{args, client::GenericClient, DatabaseClient, Statement, Value};
 
 pub struct Client {
     db: GenericClient,
@@ -248,16 +248,88 @@ impl Client {
 
         None
     }
+    pub async fn create_mailbox(&self, user_id: i32, mailbox_name: &str) -> Result<()> {
+        self.db
+            .execute(Statement::with_args(
+                "INSERT INTO mailboxes(name, user_id, flags) VALUES(?, ?, 0) ",
+                libsql_client::args!(mailbox_name, user_id),
+            ))
+            .await?;
+
+        Ok(())
+    }
+    pub async fn delete_mailbox(&self, mailbox_id: i32) -> Result<()> {
+        self.db
+            .execute(Statement::with_args(
+                "DELETE FROM mail WHERE mailbox_id = ?",
+                libsql_client::args!(mailbox_id),
+            ))
+            .await?;
+        self.db
+            .execute(Statement::with_args(
+                "DELETE FROM mailboxes WHERE id = ?",
+                args!(mailbox_id),
+            ))
+            .await?;
+
+        Ok(())
+    }
+    pub async fn rename_mailbox(&self, new_name: &str, mailbox_id: i32) -> Result<()> {
+        self.db
+            .execute(Statement::with_args(
+                "UPDATE mailboxes SET name = ? WHERE id = ?",
+                args!(new_name, mailbox_id),
+            ))
+            .await?;
+        Ok(())
+    }
+    pub async fn get_mailbox_names_for_user(&self, user_id: i32) -> Option<Vec<String>> {
+        let result = self
+            .db
+            .execute(Statement::with_args(
+                "SELECT name FROM mailboxes WHERE user_id = ?",
+                args!(user_id),
+            ))
+            .await
+            .ok()?;
+        let vec = result
+            .rows
+            .iter()
+            .map(|row| row.values.first())
+            .flatten()
+            .map(|e| {
+                if let Value::Text { value: t } = e {
+                    Some(t.clone())
+                } else {
+                    None
+                }
+            })
+            .flatten()
+            .collect::<Vec<String>>();
+        Some(vec)
+    }
+    pub async fn expunge(&self, mailbox_id: i32) -> Result<()> {
+        //deleted is 3rd bit
+        let deleted = 1 << 2;
+        self.db
+            .execute(Statement::with_args(
+                "DELETE FROM mail WHERE mailbox_id = ? AND flags & ?",
+                args!(mailbox_id, deleted),
+            ))
+            .await?;
+
+        Ok(())
+    }
+    pub async fn update_flags(&self, mail_id: i32, flags: &[IMAPFlags]) -> Result<()> {
+        Ok(())
+    }
 }
 
-pub enum IMAPFlag {
-    Answered,
-    Flagged,
-    Deleted,
-    Seen,
-    Draft,
-}
-
-pub fn update_flags(flag: IMAPFlag, operation: bool) -> Result<()> {
-    Ok(())
+//NOTE rethink this
+pub enum IMAPFlags {
+    Answered(bool),
+    Flagged(bool),
+    Deleted(bool),
+    Seen(bool),
+    Draft(bool),
 }
