@@ -52,7 +52,7 @@ impl Client {
         //MAIL TABLE
         db.batch([
             "CREATE TABLE IF NOT EXISTS mail (uid integer unique not null, date text, sender text, recipients text, data text, 
-             mailbox_id integer not null, flags integer, FOREIGN KEY(mailbox_id) REFERENCES mailboxes(id), PRIMARY KEY(uid));",
+             mailbox_id integer not null, flags text, FOREIGN KEY(mailbox_id) REFERENCES mailboxes(id), PRIMARY KEY(uid));",
             "CREATE INDEX IF NOT EXISTS mail_date ON mail(date);",
             "CREATE INDEX IF NOT EXISTS mail_uid ON mail(uid);",
             "CREATE INDEX IF NOT EXISTS mail_flags ON mail(flags);",
@@ -320,16 +320,44 @@ impl Client {
 
         Ok(())
     }
-    pub async fn update_flags(&self, mail_id: i32, flags: &[IMAPFlags]) -> Result<()> {
-        Ok(())
+
+    //NOTE this doesn't work when querying the absence of a flag, since 0 will not get in the
+    //format string
+    pub async fn mail_count_with_flags(
+        &self,
+        mailbox_id: i32,
+        flags: Vec<(IMAPFlags, bool)>,
+    ) -> Result<i32> {
+        let mut flagnum = 0;
+        for flag in flags {
+            let lhs = if flag.1 { 1 } else { 0 };
+            flagnum |= lhs << flag.0 as u8
+        }
+        tracing::debug!("flagnum is {:b}", flagnum);
+        i32::try_from(
+            self.db
+                .execute(Statement::with_args(
+                    "SELECT COUNT(*) FROM mail WHERE mailbox_id = ? AND flags LIKE '%?'",
+                    args!(mailbox_id, format!("{:b}", flagnum)),
+                ))
+                .await?
+                .rows
+                .first()
+                .context("failed count(*) query")?
+                .values
+                .first()
+                .context("failed count(*) query")?,
+        )
+        .map_err(|e| anyhow!(e))
     }
 }
 
 //NOTE rethink this
+#[repr(u8)]
 pub enum IMAPFlags {
-    Answered(bool),
-    Flagged(bool),
-    Deleted(bool),
-    Seen(bool),
-    Draft(bool),
+    Answered = 0,
+    Flagged = 1,
+    Deleted = 2,
+    Seen = 3,
+    Draft = 4,
 }
