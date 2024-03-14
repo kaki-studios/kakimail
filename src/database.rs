@@ -1,3 +1,5 @@
+use std::char;
+
 use crate::smtp_common::Mail;
 use anyhow::{anyhow, Context, Result};
 use libsql_client::{args, client::GenericClient, DatabaseClient, Statement, Value};
@@ -52,7 +54,8 @@ impl Client {
         //MAIL TABLE
         db.batch([
             "CREATE TABLE IF NOT EXISTS mail (uid integer unique not null, date text, sender text, recipients text, data text, 
-             mailbox_id integer not null, flags text, FOREIGN KEY(mailbox_id) REFERENCES mailboxes(id), PRIMARY KEY(uid));",
+             mailbox_id integer not null, flags varchar(5), FOREIGN KEY(mailbox_id) REFERENCES mailboxes(id), PRIMARY KEY(uid));",
+            //                                  varchar(5) because we have 5 flags
             "CREATE INDEX IF NOT EXISTS mail_date ON mail(date);",
             "CREATE INDEX IF NOT EXISTS mail_uid ON mail(uid);",
             "CREATE INDEX IF NOT EXISTS mail_flags ON mail(flags);",
@@ -310,10 +313,10 @@ impl Client {
     }
     pub async fn expunge(&self, mailbox_id: i32) -> Result<()> {
         //deleted is 3rd bit
-        let deleted = 1 << 2;
+        let deleted = "__1__";
         self.db
             .execute(Statement::with_args(
-                "DELETE FROM mail WHERE mailbox_id = ? AND flags & ?",
+                "DELETE FROM mail WHERE mailbox_id = ? AND flags like ?",
                 args!(mailbox_id, deleted),
             ))
             .await?;
@@ -328,17 +331,17 @@ impl Client {
         mailbox_id: i32,
         flags: Vec<(IMAPFlags, bool)>,
     ) -> Result<i32> {
-        let mut flagnum = 0;
-        for flag in flags {
-            let lhs = if flag.1 { 1 } else { 0 };
-            flagnum |= lhs << flag.0 as u8
+        let mut flagnum: [char; 5] = ['_'; 5]; //five flags
+        for (flag, on) in flags {
+            let indicator = if on { '1' } else { '0' };
+            flagnum[flag as usize] = indicator;
         }
-        tracing::debug!("flagnum is {:b}", flagnum);
+        tracing::debug!("flagnum is {:?}", flagnum);
         i32::try_from(
             self.db
                 .execute(Statement::with_args(
-                    "SELECT COUNT(*) FROM mail WHERE mailbox_id = ? AND flags LIKE '%?'",
-                    args!(mailbox_id, format!("{:b}", flagnum)),
+                    "SELECT COUNT(*) FROM mail WHERE mailbox_id = ? AND flags LIKE ?",
+                    args!(mailbox_id, flagnum.iter().collect::<String>()),
                 ))
                 .await?
                 .rows

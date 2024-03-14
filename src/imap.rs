@@ -209,7 +209,7 @@ impl IMAP {
                     .context("mail_count failed")?;
                 let count_string = format!("* {} EXISTS\r\n", count).as_bytes().to_vec();
 
-                let expected_uid = db.biggest_uid().await.unwrap_or(0) + 1;
+                let expected_uid = db.biggest_uid().await.unwrap_or(-1) + 1;
                 let expected_uid_string = format!("* OK [UIDNEXT {}]\r\n", expected_uid)
                     .as_bytes()
                     .to_vec();
@@ -366,7 +366,7 @@ impl IMAP {
                             result.push(format!("MESSAGES {}", msg_count).as_bytes().to_vec());
                         }
                         "UIDNEXT" => {
-                            let nextuid = db.biggest_uid().await.unwrap_or(0) + 1;
+                            let nextuid = db.biggest_uid().await.unwrap_or(-1) + 1;
                             result.push(format!("UIDNEXT {}", nextuid).as_bytes().to_vec());
                         }
                         "UNSEEN" => {
