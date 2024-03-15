@@ -17,7 +17,7 @@ authenticated state:
 - [X] rename
 - [ ] subscribe
 - [ ] unsubscribe
-- [X] list
+- [X] list (barebones, need more functionality)
 - [X] namespace
 - [X] status
 - [ ] append
