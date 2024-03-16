@@ -1,0 +1,26 @@
+version: '3'
+# NOTE: to use this, your file structure should look like this:
+# .
+# ├── docker-compose.yml
+# ├── kakimail
+# └── kakimail-website (https://github.com/kaki-studios/kakimail-website)
+
+services:
+  kakimail:
+    build:
+      context: ./kakimail
+      dockerfile: ./Dockerfile
+    ports:
+      - "7777:25"
+      - "587:587"
+  kakimail_website:
+    build:
+      context: ./kakimail-website
+      dockerfile: ./Dockerfile
+    ports:
+      - "80:8000"
+      - "443:8001"
+    volumes:
+      - cache:/var/www/.cache
+volumes:
+  cache:
