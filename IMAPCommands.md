@@ -1,14 +1,14 @@
-## Progress on imap commands
+# Progress on imap commands
 
-# any state:
+### any state:
 - [X] capability
 - [X] noop
 - [X] logout
-# not authenticated state:
+### not authenticated state:
 - [ ] starttls
 - [X] authenticate
 - [X] login
-# authenticated state:
+### authenticated state:
 - [X] enable (no extensions supported)
 - [X] select
 - [X] examine
@@ -22,7 +22,7 @@
 - [X] status
 - [ ] append
 - [ ] idle
-# selected state:
+### selected state:
 - [X] close
 - [X] unselect
 - [X] expunge
