@@ -15,8 +15,8 @@
 - [X] create
 - [X] delete
 - [X] rename
-- [ ] subscribe
-- [ ] unsubscribe
+- [x] subscribe
+- [x] unsubscribe
 - [X] list (barebones, need more functionality)
 - [X] namespace
 - [X] status

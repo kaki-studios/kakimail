@@ -25,7 +25,7 @@ def callback(bytes):
 
 
 client.authenticate("PLAIN", callback)
-client.list()
+client.list(directory="SUBSCRIBED")
 client.status("INBOX", "(UIDNEXT MESSAGES)")
 client.select("INBOX", False)
 client.capability()

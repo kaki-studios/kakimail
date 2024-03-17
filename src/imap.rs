@@ -305,22 +305,38 @@ impl IMAP {
                     .to_vec()])
             }
             ("subscribe", IMAPState::Authed(id)) => {
-                //TODO
-                Ok(vec![format!(
-                    "{} NO cannot subscribe to mailboxes\r\n",
-                    tag
-                )
-                .as_bytes()
-                .to_vec()])
+                let mailbox_name = msg.next().context("should provide mailbox name")?;
+                let mailbox_id = self
+                    .db
+                    .lock()
+                    .await
+                    .get_mailbox_id(id, mailbox_name)
+                    .await?;
+                self.db
+                    .lock()
+                    .await
+                    .change_mailbox_subscribed(mailbox_id, true)
+                    .await?;
+                Ok(vec![format!("{} OK SUBSCRIBE completed\r\n", tag)
+                    .as_bytes()
+                    .to_vec()])
             }
-            ("unsubscribe", IMAPState::Authed(x)) => {
-                //TODO
-                Ok(vec![format!(
-                    "{} NO cannot unsubscribe from mailboxes\r\n",
-                    tag
-                )
-                .as_bytes()
-                .to_vec()])
+            ("unsubscribe", IMAPState::Authed(id)) => {
+                let mailbox_name = msg.next().context("should provide mailbox name")?;
+                let mailbox_id = self
+                    .db
+                    .lock()
+                    .await
+                    .get_mailbox_id(id, mailbox_name)
+                    .await?;
+                self.db
+                    .lock()
+                    .await
+                    .change_mailbox_subscribed(mailbox_id, false)
+                    .await?;
+                Ok(vec![format!("{} OK UNSUBSCRIBE completed\r\n", tag)
+                    .as_bytes()
+                    .to_vec()])
             }
             ("list", IMAPState::Authed(id)) => {
                 let mut mailboxes = self
@@ -330,6 +346,7 @@ impl IMAP {
                     .get_mailbox_names_for_user(id)
                     .await
                     .context(anyhow!("couldn't get mailbox names"))?;
+                dbg!(msg.collect::<Vec<&str>>());
                 mailboxes = mailboxes
                     .iter()
                     .map(|v| format!("* LIST () \"/\" {}\r\n", v))

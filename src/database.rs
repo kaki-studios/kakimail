@@ -309,7 +309,12 @@ impl Client {
             })
             .flatten()
             .collect::<Vec<String>>();
-        Some(vec)
+        if vec.is_empty() {
+            self.create_mailbox(user_id, "INBOX").await.ok()?;
+            Some(vec!["INBOX".to_string()])
+        } else {
+            Some(vec)
+        }
     }
     pub async fn expunge(&self, mailbox_id: i32) -> Result<()> {
         //deleted is 3rd bit
@@ -324,8 +329,6 @@ impl Client {
         Ok(())
     }
 
-    //NOTE this doesn't work when querying the absence of a flag, since 0 will not get in the
-    //format string
     pub async fn mail_count_with_flags(
         &self,
         mailbox_id: i32,
@@ -352,6 +355,16 @@ impl Client {
                 .context("failed count(*) query")?,
         )
         .map_err(|e| anyhow!(e))
+    }
+    pub async fn change_mailbox_subscribed(&self, mailbox_id: i32, subscribed: bool) -> Result<()> {
+        let flag = if subscribed { 1 } else { 0 };
+        self.db
+            .execute(Statement::with_args(
+                "UPDATE mailboxes SET flags = ? WHERE id = ?",
+                args!(flag, mailbox_id),
+            ))
+            .await?;
+        Ok(())
     }
 }
 
