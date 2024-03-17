@@ -21,6 +21,6 @@ services:
       - "80:8000"
       - "443:8001"
     volumes:
-      - certs:/app/cert-cache
+      - certs:/src/cert-cache
 volumes:
   certs:
