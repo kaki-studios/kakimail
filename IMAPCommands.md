@@ -30,4 +30,4 @@
 - [ ] store
 - [ ] copy
 - [ ] move
-- [ ] uid
+- [X] uid

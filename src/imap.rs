@@ -80,7 +80,17 @@ impl IMAP {
         }
         let mut msg = raw_msg.split_whitespace();
         let tag = msg.next().context("received empty tag")?;
-        let command = msg.next().context("received empty command")?.to_lowercase();
+        let mut command = msg.next().context("received empty command")?.to_lowercase();
+        let mut uid = false;
+        if command.as_str() == "uid" {
+            uid = true;
+            command = msg
+                .next()
+                .context("uid command should provide actual command")?
+                .to_lowercase();
+        }
+        dbg!(&uid);
+
         let state = self.state.clone();
         match (command.as_str(), state) {
             //ANY STATE
@@ -89,7 +99,7 @@ impl IMAP {
                 Ok(vec![value.as_bytes().to_vec()])
             }
             ("capability", _) => {
-                let value = "* CAPABILITY IMAP4rev1 IMAP4rev2 AUTH=PLAIN\r\n";
+                let value = "* CAPABILITY IMAP4rev2 AUTH=PLAIN\r\n";
                 let value2 = format!("{} OK CAPABILITY completed\r\n", tag);
                 Ok(vec![value.as_bytes().to_vec(), value2.as_bytes().to_vec()])
             }
@@ -339,6 +349,7 @@ impl IMAP {
                     .to_vec()])
             }
             ("list", IMAPState::Authed(id)) => {
+                //FIX this
                 let mut mailboxes = self
                     .db
                     .lock()
@@ -359,8 +370,8 @@ impl IMAP {
 
                 Ok(mailboxes)
             }
-            ("namespace", IMAPState::Authed(x)) => {
-                //TODO
+            ("namespace", IMAPState::Authed(_id)) => {
+                //idk
                 Ok(vec![Self::NAMESPACE.to_vec()])
             }
             ("status", IMAPState::Authed(id)) => {
@@ -446,11 +457,30 @@ impl IMAP {
                     mailbox_id: x,
                 }),
             ) => {
-                //TODO tell the uids of deleted messages like the rfc
-                self.db.lock().await.expunge(x).await?;
-                Ok(vec![format!("{} OK EXPUNGE completed\r\n", tag)
-                    .as_bytes()
-                    .to_vec()])
+                let uid_range = if uid {
+                    let test = msg
+                        .next()
+                        .context("should provide range")?
+                        .split_once(":")
+                        .map(|(a, b)| (a.parse::<i32>().ok(), b.parse::<i32>().ok()))
+                        .context("should work")?;
+                    //cool
+                    test.0.zip(test.1)
+                } else {
+                    None
+                };
+                let results = self.db.lock().await.expunge(x, uid_range).await?;
+                let mut strings = results
+                    .iter()
+                    .map(|i| format!("* {} EXPUNGE\r\n", i).as_bytes().to_vec())
+                    .collect::<Vec<_>>();
+                strings.push(
+                    format!("{} OK EXPUNGE completed\r\n", tag)
+                        .as_bytes()
+                        .to_vec(),
+                );
+
+                Ok(strings)
             }
             ("search", IMAPState::Selected(_)) => {
                 //TODO

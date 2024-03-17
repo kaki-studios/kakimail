@@ -1,4 +1,4 @@
-use std::char;
+use std::{char, ops::Range};
 
 use crate::smtp_common::Mail;
 use anyhow::{anyhow, Context, Result};
@@ -316,17 +316,37 @@ impl Client {
             Some(vec)
         }
     }
-    pub async fn expunge(&self, mailbox_id: i32) -> Result<()> {
+    pub async fn expunge(&self, mailbox_id: i32, uid: Option<(i32, i32)>) -> Result<Vec<i32>> {
         //deleted is 3rd bit
         let deleted = "__1__";
-        self.db
-            .execute(Statement::with_args(
-                "DELETE FROM mail WHERE mailbox_id = ? AND flags like ?",
+        let statement = if let Some((start, end)) = uid {
+            Statement::with_args(
+                "DELETE FROM mail WHERE uid BETWEEN ? AND ? AND flags like ? RETURNING uid",
+                args!(start, end, deleted),
+            )
+        } else {
+            Statement::with_args(
+                "DELETE FROM mail WHERE mailbox_id = ? AND flags like ? RETURNING uid",
                 args!(mailbox_id, deleted),
-            ))
-            .await?;
-
-        Ok(())
+            )
+        };
+        let results = self.db.execute(statement).await?;
+        //borrow checker issues
+        let results = results
+            .rows
+            .iter()
+            .flat_map(|row| row.values.first())
+            .collect::<Vec<_>>();
+        let results2 = results
+            .iter()
+            .flat_map(|val| i32::try_from(*val))
+            .collect::<Vec<_>>();
+        let sequence_nums = results2
+            .iter()
+            .enumerate()
+            .map(|(i, val)| *val - i as i32)
+            .collect();
+        Ok(sequence_nums)
     }
 
     pub async fn mail_count_with_flags(
