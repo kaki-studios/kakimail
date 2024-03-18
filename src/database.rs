@@ -70,7 +70,7 @@ impl Client {
     pub async fn biggest_uid(&self) -> Result<i64> {
         let count: i64 = i64::try_from(
             self.db
-                .execute(Statement::new("SELECT uid FROM mail"))
+                .execute(Statement::new("SELECT uid FROM mail ORDER BY uid DESC"))
                 .await?
                 .rows
                 .last()
@@ -321,12 +321,12 @@ impl Client {
         let deleted = "__1__";
         let statement = if let Some((start, end)) = uid {
             Statement::with_args(
-                "DELETE FROM mail WHERE uid BETWEEN ? AND ? AND flags like ? RETURNING uid",
+                "DELETE FROM mail WHERE uid BETWEEN ? AND ? AND flags like ? RETURNING _rowid_",
                 args!(start, end, deleted),
             )
         } else {
             Statement::with_args(
-                "DELETE FROM mail WHERE mailbox_id = ? AND flags like ? RETURNING uid",
+                "DELETE FROM mail WHERE mailbox_id = ? AND flags like ? RETURNING _rowid_",
                 args!(mailbox_id, deleted),
             )
         };

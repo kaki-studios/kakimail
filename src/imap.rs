@@ -1,4 +1,4 @@
-use std::{sync::Arc, u8};
+use std::{sync::Arc, u8, vec};
 
 use anyhow::{anyhow, Context, Ok, Result};
 use base64::Engine;
@@ -15,7 +15,6 @@ use crate::{
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd)]
 enum IMAPState {
     NotAuthed,
-    WaitingForAuth(String),
     ///userid
     Authed(i32),
     Selected(SelectedState),
@@ -40,6 +39,7 @@ impl IMAP {
     const GREETING: &'static [u8] = b"* OK IMAP4rev2 Service Ready\r\n";
     const _HOLD_YOUR_HORSES: &'static [u8] = &[];
     const FLAGS: &'static [u8] = b"* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n";
+    const CAPABILITY: &'static [u8] = b"* CAPABILITY IMAP4rev2 IMAP4rev1 AUTH=PLAIN\r\n";
     const PERMANENT_FLAGS: &'static [u8] = b"* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)]\r\n";
     ///shouldn't exist in the future
     const NAMESPACE: &'static [u8] = b"* NAMESPACE ((\"\" \"/\")) NIL NIL\r\n";
@@ -57,27 +57,6 @@ impl IMAP {
     //weird return type ik, NOTE: inefficient and hacky
     async fn handle_imap(&mut self, raw_msg: &str) -> Result<Vec<Vec<u8>>> {
         tracing::trace!("Received {raw_msg} in state {:?}", self.state);
-        if let IMAPState::WaitingForAuth(tag) = &self.state.clone() {
-            return match crate::utils::DECODER.decode(raw_msg) {
-                Err(_) => Ok(vec![format!("{} BAD INVALID BASE64", tag)
-                    .as_bytes()
-                    .to_vec()]),
-                Result::Ok(decoded) => {
-                    let (usrname, password) = utils::seperate_login(decoded)?;
-                    dbg!(&usrname, &password);
-                    let result = self.db.lock().await.check_user(&usrname, &password).await;
-
-                    if let Some(a) = result {
-                        self.state = IMAPState::Authed(a);
-                        Ok(vec![format!("{} OK Success\r\n", tag).as_bytes().to_vec()])
-                    } else {
-                        Ok(vec![format!("{} BAD Invalid Credentials\r\n", tag)
-                            .as_bytes()
-                            .to_vec()])
-                    }
-                }
-            };
-        }
         let mut msg = raw_msg.split_whitespace();
         let tag = msg.next().context("received empty tag")?;
         let mut command = msg.next().context("received empty command")?.to_lowercase();
@@ -89,7 +68,6 @@ impl IMAP {
                 .context("uid command should provide actual command")?
                 .to_lowercase();
         }
-        dbg!(&uid);
 
         let state = self.state.clone();
         match (command.as_str(), state) {
@@ -99,9 +77,8 @@ impl IMAP {
                 Ok(vec![value.as_bytes().to_vec()])
             }
             ("capability", _) => {
-                let value = "* CAPABILITY IMAP4rev2 AUTH=PLAIN\r\n";
                 let value2 = format!("{} OK CAPABILITY completed\r\n", tag);
-                Ok(vec![value.as_bytes().to_vec(), value2.as_bytes().to_vec()])
+                Ok(vec![Self::CAPABILITY.to_vec(), value2.as_bytes().to_vec()])
             }
             ("logout", _) => {
                 let mut resp = Vec::new();
@@ -153,32 +130,37 @@ impl IMAP {
                     .to_vec()])
                     //not supported
                 } else {
-                    match msg.next() {
+                    //kinda sketchy, can overflow and also allocates 1kb of memory!
+                    let mut buf = [0; 1024];
+                    let encoded = match msg.next() {
                         None => {
                             //login will be in next message
-                            self.state = IMAPState::WaitingForAuth(tag.to_string());
-                            Ok(vec!["+\r\n".as_bytes().to_vec()])
+                            self.stream.write_all("+\r\n".as_bytes()).await?;
+                            let n = self.stream.read(&mut buf).await?;
+                            std::str::from_utf8(&buf[..n])?
                         }
-                        Some(encoded) => match crate::utils::DECODER.decode(encoded) {
-                            Err(_) => Ok(vec![format!("{} BAD INVALID BASE64\r\n", tag)
-                                .as_bytes()
-                                .to_vec()]),
-                            Result::Ok(decoded) => {
-                                let (usrname, password) = utils::seperate_login(decoded)?;
+                        Some(encoded) => encoded,
+                    };
+                    dbg!(&encoded);
 
-                                let result =
-                                    self.db.lock().await.check_user(&usrname, &password).await;
+                    match crate::utils::DECODER.decode(encoded) {
+                        Err(_) => Ok(vec![format!("{} BAD INVALID BASE64\r\n", tag)
+                            .as_bytes()
+                            .to_vec()]),
+                        Result::Ok(decoded) => {
+                            let (usrname, password) = utils::seperate_login(decoded)?;
 
-                                if let Some(a) = result {
-                                    self.state = IMAPState::Authed(a);
-                                    Ok(vec![format!("{} OK Success\r\n", tag).as_bytes().to_vec()])
-                                } else {
-                                    Ok(vec![format!("{} BAD Invalid Credentials\r\n", tag)
-                                        .as_bytes()
-                                        .to_vec()])
-                                }
+                            let result = self.db.lock().await.check_user(&usrname, &password).await;
+
+                            if let Some(a) = result {
+                                self.state = IMAPState::Authed(a);
+                                Ok(vec![format!("{} OK Success\r\n", tag).as_bytes().to_vec()])
+                            } else {
+                                Ok(vec![format!("{} BAD Invalid Credentials\r\n", tag)
+                                    .as_bytes()
+                                    .to_vec()])
                             }
-                        },
+                        }
                     }
                 }
             }
@@ -410,6 +392,7 @@ impl IMAP {
                             result.push(format!("DELETED {}", count).as_bytes().to_vec());
                         }
                         "SIZE" => {
+                            //TODO
                             //probably just do a sum() in sql, doesn't need to be accurate
                         }
                         _ => continue,
@@ -425,9 +408,33 @@ impl IMAP {
 
                 Ok(vec![response1, response2])
             }
+            //FIX needs to support IMAPState::Selected(x) (might need a new match arm)
             ("append", IMAPState::Authed(x)) => {
                 //TODO
-                Err(anyhow!("not implemented"))
+                let _mailbox_name = msg.next().context("should provide mailbox name")?;
+                let mut rest = msg.collect::<Vec<&str>>();
+                let msg_size = rest.pop().context("shoul provide message literal")?;
+                let count = msg_size
+                    .chars()
+                    .filter(|c| c.is_digit(10))
+                    .collect::<String>()
+                    .parse::<i32>()?;
+                //as in {394+}
+                if !msg_size.ends_with("+}") {
+                    //yeah ik were doing stream stuff in the statemachine
+                    self.stream
+                        .write_all("+ Ready for literal data\r\n".as_bytes())
+                        .await?;
+                }
+                let mut buf = vec![0_u8; count as usize];
+                self.stream.read_exact(&mut buf).await?;
+                dbg!(std::str::from_utf8(&buf)?);
+                let _datetime_fmt = "DD-Mmm-YYYY HH:MM:SS +HHMM";
+                //use chrono::DateTime::parse_from_str()
+
+                //NOTE we have the mail in buf, we have optional arguments in rest
+                //we need to parse the optional flags (if any) and then replicate the mail!
+                Ok(vec!["+ Ready for literal data\r\n".as_bytes().to_vec()])
             }
             ("idle", IMAPState::Authed(x)) => {
                 //TODO
@@ -437,6 +444,7 @@ impl IMAP {
                 self.state = IMAPState::Authed(y.user_id);
                 if x == "close" && !y.read_only {
                     //TODO: delete pending mail permanently
+                    self.db.lock().await.expunge(y.mailbox_id, None).await?;
                 }
                 let response = if x == "close" {
                     format!("{} OK CLOSE completed\r\n", tag)
@@ -458,12 +466,15 @@ impl IMAP {
                 }),
             ) => {
                 let uid_range = if uid {
-                    let test = msg
+                    let mut test = msg
                         .next()
                         .context("should provide range")?
                         .split_once(":")
                         .map(|(a, b)| (a.parse::<i32>().ok(), b.parse::<i32>().ok()))
                         .context("should work")?;
+                    if test.0 > test.1 {
+                        std::mem::swap(&mut test.0, &mut test.1);
+                    }
                     //cool
                     test.0.zip(test.1)
                 } else {
@@ -518,6 +529,8 @@ impl IMAP {
             if self.state == IMAPState::Logout {
                 break;
             }
+            //clear
+            buf = [0; 65536];
             // if response != SMTPStateMachine::HOLD_YOUR_HORSES {
 
             // } else {

@@ -25,10 +25,15 @@ def callback(bytes):
 
 
 client.authenticate("PLAIN", callback)
-client.list(directory="SUBSCRIBED")
+client.list()
 client.status("INBOX", "(UIDNEXT MESSAGES)")
+client.append(
+    "INBOX",
+    "",
+    (1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1),
+    b"HELLO! THIS IS A TEST IN ALL CAPS",
+)
 client.select("INBOX", False)
-client.capability()
-client.noop()
+client.expunge()
 client.close()
 client.logout()
