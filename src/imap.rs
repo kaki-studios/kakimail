@@ -409,7 +409,7 @@ impl IMAP {
                 Ok(vec![response1, response2])
             }
             //FIX needs to support IMAPState::Selected(x) (might need a new match arm)
-            ("append", IMAPState::Authed(x)) => {
+            ("append", IMAPState::Authed(id)) => {
                 //TODO
                 let _mailbox_name = msg.next().context("should provide mailbox name")?;
                 let mut rest = msg.collect::<Vec<&str>>();
@@ -429,8 +429,9 @@ impl IMAP {
                 let mut buf = vec![0_u8; count as usize];
                 self.stream.read_exact(&mut buf).await?;
                 dbg!(std::str::from_utf8(&buf)?);
-                let _datetime_fmt = "DD-Mmm-YYYY HH:MM:SS +HHMM";
-                //use chrono::DateTime::parse_from_str()
+                let datetime_fmt = "DD-Mmm-YYYY HH:MM:SS +HHMM";
+                let _datetime =
+                    chrono::DateTime::parse_from_str(std::str::from_utf8(&buf), datetime_fmt)?;
 
                 //NOTE we have the mail in buf, we have optional arguments in rest
                 //we need to parse the optional flags (if any) and then replicate the mail!
