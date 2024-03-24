@@ -412,8 +412,14 @@ impl IMAP {
             ("append", IMAPState::Authed(id)) => {
                 //TODO
                 let _mailbox_name = msg.next().context("should provide mailbox name")?;
+                let mailbox_id = self
+                    .db
+                    .lock()
+                    .await
+                    .get_mailbox_id(id, _mailbox_name)
+                    .await?;
                 let mut rest = msg.collect::<Vec<&str>>();
-                let msg_size = rest.pop().context("shoul provide message literal")?;
+                let msg_size = rest.pop().context("should provide message literal")?;
                 let count = msg_size
                     .chars()
                     .filter(|c| c.is_digit(10))
@@ -430,12 +436,36 @@ impl IMAP {
                 self.stream.read_exact(&mut buf).await?;
                 dbg!(std::str::from_utf8(&buf)?);
                 let datetime_fmt = "DD-Mmm-YYYY HH:MM:SS +HHMM";
-                let _datetime =
-                    chrono::DateTime::parse_from_str(std::str::from_utf8(&buf), datetime_fmt)?;
+                let mut datetime = None;
 
-                //NOTE we have the mail in buf, we have optional arguments in rest
-                //we need to parse the optional flags (if any) and then replicate the mail!
-                Ok(vec!["+ Ready for literal data\r\n".as_bytes().to_vec()])
+                for arg in rest {
+                    if arg.starts_with("(") {
+                        dbg!(arg);
+                        let stripped = arg
+                            .strip_prefix("(")
+                            .context("should begin with (")?
+                            .strip_suffix(")")
+                            .context("should end with )")?;
+                        dbg!(stripped);
+                        //the flags SHOULD be set in the resulting message...
+                        //TODO
+                    } else {
+                        if datetime.is_none() {
+                            datetime = chrono::DateTime::parse_from_str(arg, datetime_fmt).ok();
+                        }
+                    }
+                    dbg!(arg);
+                }
+                let mail = crate::smtp_common::Mail {
+                    from: "none".to_string(),
+                    to: vec!["none".to_string()],
+                    data: String::from_utf8(buf)?,
+                };
+                //TODO:
+                //-date (change db replicate() function)
+                //-parse mail headers for recipients and sender
+                self.db.lock().await.replicate(mail, mailbox_id).await?;
+                Ok(vec!["OK APPEND completed".as_bytes().to_vec()])
             }
             ("idle", IMAPState::Authed(x)) => {
                 //TODO
@@ -477,6 +507,7 @@ impl IMAP {
                         std::mem::swap(&mut test.0, &mut test.1);
                     }
                     //cool
+                    //turn a (Option<T>, Option<T>) to a Option<(T, T)>
                     test.0.zip(test.1)
                 } else {
                     None
@@ -530,16 +561,7 @@ impl IMAP {
             if self.state == IMAPState::Logout {
                 break;
             }
-            //clear
             buf = [0; 65536];
-            // if response != SMTPStateMachine::HOLD_YOUR_HORSES {
-
-            // } else {
-            // tracing::debug!("Not responding, awaiting for more data");
-            // }
-            // if response == SMTPStateMachine::KTHXBYE {
-            //     break;
-            // }
         }
         Ok(())
     }
