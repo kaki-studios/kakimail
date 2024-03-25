@@ -1,4 +1,4 @@
-use std::{sync::Arc, u8, vec};
+use std::{io::BufRead, sync::Arc, u8, vec};
 
 use anyhow::{anyhow, Context, Ok, Result};
 use base64::Engine;
@@ -45,6 +45,8 @@ impl IMAP {
     const NAMESPACE: &'static [u8] = b"* NAMESPACE ((\"\" \"/\")) NIL NIL\r\n";
     const NO_PERMANENT_FLAGS: &'static [u8] =
         b"* OK [PERMANENTFLAGS ()] No permanent flags permitted\r\n";
+    //used for e.g. APPEND
+    const DATETIME_FMT: &'static str = "%d-%b-%y %H:%M:%S %z";
 
     /// Creates a new server from a connected stream
     pub async fn new(stream: tokio::net::TcpStream) -> Result<Self> {
@@ -410,7 +412,7 @@ impl IMAP {
             }
             //FIX needs to support IMAPState::Selected(x) (might need a new match arm)
             ("append", IMAPState::Authed(id)) => {
-                //TODO
+                //FIX set flags and the parsed datetime in the final message
                 let _mailbox_name = msg.next().context("should provide mailbox name")?;
                 let mailbox_id = self
                     .db
@@ -418,54 +420,104 @@ impl IMAP {
                     .await
                     .get_mailbox_id(id, _mailbox_name)
                     .await?;
-                let mut rest = msg.collect::<Vec<&str>>();
+                //dirty trick
+                //(\Flag) "date"
+                //into ["(\Flag", "\"date\""]
+                let mut rest = msg
+                    .collect::<Vec<&str>>()
+                    .join(" ")
+                    .split(|c| c == ')' || c == '"')
+                    // //also a bit dirty
+                    .map(|e| e.strip_prefix(" ").unwrap_or(e))
+                    .map(|e| e.to_string())
+                    .filter(|e| e != "")
+                    .collect::<Vec<String>>();
                 let msg_size = rest.pop().context("should provide message literal")?;
                 let count = msg_size
                     .chars()
                     .filter(|c| c.is_digit(10))
-                    .collect::<String>()
-                    .parse::<i32>()?;
+                    .collect::<String>();
+                let count = count.parse::<usize>()?;
                 //as in {394+}
+                let mail_data: String;
                 if !msg_size.ends_with("+}") {
                     //yeah ik were doing stream stuff in the statemachine
                     self.stream
                         .write_all("+ Ready for literal data\r\n".as_bytes())
                         .await?;
+                    let mut buf = vec![0_u8; count];
+                    self.stream.read_exact(&mut buf).await?;
+                    // dbg!(std::str::from_utf8(&buf)?);
+                    mail_data = String::from_utf8(buf)?;
+                } else {
+                    mail_data = raw_msg[raw_msg.len() - count..].to_string();
                 }
-                let mut buf = vec![0_u8; count as usize];
-                self.stream.read_exact(&mut buf).await?;
-                dbg!(std::str::from_utf8(&buf)?);
-                let datetime_fmt = "DD-Mmm-YYYY HH:MM:SS +HHMM";
                 let mut datetime = None;
+                // dbg!(&rest);
 
-                for arg in rest {
+                for arg in &rest {
+                    // dbg!(&arg);
                     if arg.starts_with("(") {
-                        dbg!(arg);
-                        let stripped = arg
+                        // dbg!(arg);
+                        let _stripped = arg
                             .strip_prefix("(")
                             .context("should begin with (")?
                             .strip_suffix(")")
                             .context("should end with )")?;
-                        dbg!(stripped);
+                        // dbg!(stripped);
                         //the flags SHOULD be set in the resulting message...
                         //TODO
                     } else {
                         if datetime.is_none() {
-                            datetime = chrono::DateTime::parse_from_str(arg, datetime_fmt).ok();
+                            let stripped_arg =
+                                arg.chars().filter(|c| c != &'"').collect::<String>();
+                            datetime =
+                                chrono::DateTime::parse_from_str(&stripped_arg, DATETIME_FMT)
+                                    .map_err(|e| tracing::error!("{}", e))
+                                    .ok();
                         }
                     }
-                    dbg!(arg);
+                    // dbg!(arg);
+                }
+
+                // dbg!(&datetime);
+                let mut recipients = vec![];
+                let mut from = "".to_string();
+                for line in mail_data.lines() {
+                    // dbg!(&line);
+                    match line.split_once(": ") {
+                        Some(("From", x)) => {
+                            let start_index = x.find("<").map(|e| e + 1);
+                            let end_index = x.find(">");
+                            let indices = start_index.zip(end_index).unwrap_or((0, 1));
+                            from = x[indices.0..indices.1].to_string();
+                        }
+                        Some(("To", x)) => {
+                            recipients.push(x.to_string());
+                        }
+                        _ => {}
+                    }
                 }
                 let mail = crate::smtp_common::Mail {
-                    from: "none".to_string(),
-                    to: vec!["none".to_string()],
-                    data: String::from_utf8(buf)?,
+                    from,
+                    to: recipients,
+                    data: mail_data,
                 };
+                // dbg!(&mail);
                 //TODO:
                 //-date (change db replicate() function)
-                //-parse mail headers for recipients and sender
                 self.db.lock().await.replicate(mail, mailbox_id).await?;
-                Ok(vec!["OK APPEND completed".as_bytes().to_vec()])
+                let unix_time = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .context("Time shouldn't go backwards")?;
+                let seconds: u32 = unix_time.as_secs().try_into()?;
+                let _resp = format!(
+                    "{} OK [APPENDUID {} {}] APPEND completed\r\n",
+                    tag,
+                    seconds,
+                    self.db.lock().await.biggest_uid().await.unwrap_or(0)
+                );
+                Ok(vec![_resp.as_bytes().to_vec()])
             }
             ("idle", IMAPState::Authed(x)) => {
                 //TODO

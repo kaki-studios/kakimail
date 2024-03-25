@@ -24,15 +24,15 @@ def callback(bytes):
     return f"\0{username}\0{password}".encode()
 
 
+mail = b"""From: Tom Test <test@example.com>
+To: test@kaki.foo
+testing
+bye"""
+
 client.authenticate("PLAIN", callback)
 client.list()
 client.status("INBOX", "(UIDNEXT MESSAGES)")
-client.append(
-    "INBOX",
-    "",
-    (1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1),
-    b"HELLO! THIS IS A TEST IN ALL CAPS",
-)
+client.append("INBOX", "", (1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1), mail)
 client.select("INBOX", False)
 client.expunge()
 client.close()

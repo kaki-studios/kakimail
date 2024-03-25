@@ -70,7 +70,7 @@ impl Client {
     pub async fn biggest_uid(&self) -> Result<i64> {
         let count: i64 = i64::try_from(
             self.db
-                .execute(Statement::new("SELECT uid FROM mail ORDER BY uid DESC"))
+                .execute(Statement::new("SELECT uid FROM mail ORDER BY uid ASC"))
                 .await?
                 .rows
                 .last()
@@ -95,6 +95,7 @@ impl Client {
             //so that it will become 0 in the db
             .unwrap_or(-1)
             + 1;
+        dbg!(&next_uid);
 
         self.db
             .execute(Statement::with_args(
