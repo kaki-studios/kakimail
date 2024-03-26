@@ -13,6 +13,8 @@ services:
     ports:
       - "7777:25"
       - "587:587"
+    volumes:
+      - db:/usr/src/app/data
   kakimail_website:
     build:
       context: ./kakimail-website
@@ -22,5 +24,7 @@ services:
       - "443:8001"
     volumes:
       - certs:/src/cert-cache
+      - db:/src/data
 volumes:
   certs:
+  db:
