@@ -13,6 +13,7 @@ services:
     ports:
       - "7777:25"
       - "587:587"
+      - "143:143"
     volumes:
       - db:/usr/src/app/data
   kakimail_website:
