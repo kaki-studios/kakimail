@@ -20,7 +20,7 @@
 - [X] list (barebones, need more functionality)
 - [X] namespace
 - [X] status
-- [ ] append
+- [X] append
 - [ ] idle
 ### selected state:
 - [X] close
