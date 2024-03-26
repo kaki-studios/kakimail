@@ -90,7 +90,7 @@ impl SmtpIncoming {
             let Some(m_id) = db.get_mailbox_id(user_id, "INBOX").await.ok() else {
                 continue;
             };
-            db.replicate(mail.clone(), m_id)
+            db.replicate(mail.clone(), m_id, None)
                 .await
                 .map_err(|e| {
                     tracing::error!("{}", e);

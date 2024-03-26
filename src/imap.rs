@@ -472,7 +472,7 @@ impl IMAP {
                             let stripped_arg =
                                 arg.chars().filter(|c| c != &'"').collect::<String>();
                             datetime =
-                                chrono::DateTime::parse_from_str(&stripped_arg, DATETIME_FMT)
+                                chrono::DateTime::parse_from_str(&stripped_arg, Self::DATETIME_FMT)
                                     .map_err(|e| tracing::error!("{}", e))
                                     .ok();
                         }
@@ -506,7 +506,11 @@ impl IMAP {
                 // dbg!(&mail);
                 //TODO:
                 //-date (change db replicate() function)
-                self.db.lock().await.replicate(mail, mailbox_id).await?;
+                self.db
+                    .lock()
+                    .await
+                    .replicate(mail, mailbox_id, datetime)
+                    .await?;
                 let unix_time = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .context("Time shouldn't go backwards")?;

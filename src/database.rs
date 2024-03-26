@@ -2,6 +2,7 @@ use std::{char, ops::Range};
 
 use crate::smtp_common::Mail;
 use anyhow::{anyhow, Context, Result};
+use chrono::FixedOffset;
 use libsql_client::{args, client::GenericClient, DatabaseClient, Statement, Value};
 
 pub struct Client {
@@ -84,10 +85,20 @@ impl Client {
     }
 
     /// Replicates received mail to the database
-    pub async fn replicate(&self, mail: Mail, mailbox_id: i32) -> Result<()> {
-        let now = chrono::offset::Utc::now()
-            .format("%Y-%m-%d %H:%M:%S%.3f")
-            .to_string();
+    pub async fn replicate(
+        &self,
+        mail: Mail,
+        mailbox_id: i32,
+        datetime: Option<chrono::DateTime<FixedOffset>>,
+    ) -> Result<()> {
+        let time = if let Some(x) = datetime {
+            //TODO extract the format string
+            x.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+        } else {
+            chrono::offset::Utc::now()
+                .format("%Y-%m-%d %H:%M:%S%.3f")
+                .to_string()
+        };
         let next_uid = self
             .biggest_uid()
             .await
@@ -102,7 +113,7 @@ impl Client {
                 "INSERT INTO mail VALUES (?, ?, ?, ?, ?, ?, ?)",
                 libsql_client::args!(
                     next_uid as i32,
-                    now,
+                    time,
                     mail.from,
                     mail.to.join(", "),
                     mail.data,

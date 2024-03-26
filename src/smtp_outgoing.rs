@@ -75,7 +75,11 @@ impl SmtpOutgoing {
             e
         })?;
         let id = self.db.lock().await.get_mailbox_id(id, "INBOX").await?;
-        self.db.lock().await.replicate(mail.clone(), id).await?;
+        self.db
+            .lock()
+            .await
+            .replicate(mail.clone(), id, None)
+            .await?;
         Ok(())
     }
 
