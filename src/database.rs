@@ -16,9 +16,9 @@ impl Client {
     /// The `mail` table will be automatically created if it does not exist.
     pub async fn new() -> Result<Self> {
         if std::env::var("LIBSQL_CLIENT_URL").is_err() {
-            let mut db_path = std::env::temp_dir();
-            db_path.push("kakimail.db");
-            let db_path = db_path.display();
+            let mut db_path_buf = std::env::current_dir()?;
+            db_path_buf.push("data/kakimail.db");
+            let db_path = db_path_buf.display();
             tracing::warn!("LIBSQL_CLIENT_URL not set, using a default local database: {db_path}");
             std::env::set_var("LIBSQL_CLIENT_URL", format!("file://{db_path}"));
         }
