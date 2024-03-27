@@ -3,13 +3,13 @@ use std::{char, ops::Range};
 use crate::smtp_common::Mail;
 use anyhow::{anyhow, Context, Result};
 use chrono::FixedOffset;
-use libsql_client::{args, client::GenericClient, DatabaseClient, Statement, Value};
+use libsql_client::{args, client::Client, Statement, Value};
 
-pub struct Client {
-    db: GenericClient,
+pub struct DBClient {
+    db: Client,
 }
 
-impl Client {
+impl DBClient {
     /// Creates a new database client.
     /// If the LIBSQL_CLIENT_URL environment variable is not set, a local database will be used.
     /// It's also possible to use a remote database by setting the LIBSQL_CLIENT_URL environment variable.
@@ -22,7 +22,7 @@ impl Client {
             tracing::warn!("LIBSQL_CLIENT_URL not set, using a default local database: {db_path}");
             std::env::set_var("LIBSQL_CLIENT_URL", format!("file://{db_path}"));
         }
-        let db = libsql_client::new_client().await?;
+        let db = libsql_client::Client::from_env().await?;
 
         //USERS TABLE, just in case kakimail-website didn't create it already
         db.batch([

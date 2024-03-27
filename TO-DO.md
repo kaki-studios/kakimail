@@ -13,6 +13,7 @@
 - [ ] support for some SMTP extensions **MOST NOTABLY STARTTLS**
 - [ ] support for implicit tls ports
 - [ ] TLS with [tokio-rustls](https://crates.io/crates/tokio-rustls)
+    - [ ] use certs from porkbun (use their api to retrieve it)
 
 
 

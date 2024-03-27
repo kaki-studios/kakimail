@@ -15,7 +15,7 @@ pub struct SmtpOutgoing {
     pub stream: tokio::net::TcpStream,
     //should add message queue when using seriously
     pub state_machine: SMTPStateMachine,
-    pub db: Arc<Mutex<database::Client>>,
+    pub db: Arc<Mutex<database::DBClient>>,
 }
 
 impl SmtpOutgoing {
@@ -24,7 +24,7 @@ impl SmtpOutgoing {
         Ok(Self {
             stream,
             state_machine: SMTPStateMachine::new(domain, true),
-            db: Arc::new(Mutex::new(database::Client::new().await?)),
+            db: Arc::new(Mutex::new(database::DBClient::new().await?)),
         })
     }
     pub async fn serve(mut self) -> Result<()> {

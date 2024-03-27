@@ -176,7 +176,7 @@ impl SMTPStateMachine {
     pub async fn handle_smtp_outgoing(
         &mut self,
         raw_msg: &str,
-        db: Arc<Mutex<database::Client>>,
+        db: Arc<Mutex<database::DBClient>>,
     ) -> Result<&[u8]> {
         tracing::trace!("Received {raw_msg} in state {:?}", self.state);
         let mut msg = raw_msg.split_whitespace();

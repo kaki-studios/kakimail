@@ -1,0 +1,72 @@
+use std::ops::{Deref, DerefMut};
+
+use anyhow::Result;
+use tokio::{
+    io::{AsyncRead, AsyncWrite},
+    net::TcpStream,
+};
+use tokio_rustls::TlsAcceptor;
+
+pub enum StreamType {
+    Plain(TcpStream),
+    Tls(tokio_rustls::server::TlsStream<TcpStream>),
+}
+
+impl StreamType {
+    pub async fn upgrade_to_tls(self, tls_acceptor: TlsAcceptor) -> Result<Self> {
+        match self {
+            StreamType::Plain(stream) => {
+                let tls_stream = tls_acceptor.accept(stream).await?;
+                Ok(StreamType::Tls(tls_stream))
+            }
+            StreamType::Tls(_) => {
+                tracing::warn!("Tried to update a tls stream, not going to do anything");
+                Ok(self)
+            }
+        }
+    }
+}
+impl AsyncWrite for StreamType {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::prelude::v1::Result<usize, std::io::Error>> {
+        match self.deref() {
+            StreamType::Plain(stream) => AsyncWrite::poll_write(std::pin::pin!(*stream), cx, buf),
+            StreamType::Tls(stream) => AsyncWrite::poll_write(std::pin::pin!(*stream), cx, buf),
+        }
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::prelude::v1::Result<(), std::io::Error>> {
+        match self.deref() {
+            StreamType::Plain(stream) => AsyncWrite::poll_shutdown(std::pin::pin!(*stream), cx),
+            StreamType::Tls(stream) => AsyncWrite::poll_shutdown(std::pin::pin!(*stream), cx),
+        }
+    }
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::prelude::v1::Result<(), std::io::Error>> {
+        match self.deref() {
+            StreamType::Plain(stream) => AsyncWrite::poll_flush(std::pin::pin!(*stream), cx),
+            StreamType::Tls(stream) => AsyncWrite::poll_flush(std::pin::pin!(*stream), cx),
+        }
+    }
+}
+
+impl AsyncRead for StreamType {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        match self.deref() {
+            StreamType::Plain(stream) => AsyncRead::poll_read(std::pin::pin!(*stream), cx, buf),
+            StreamType::Tls(stream) => AsyncRead::poll_read(std::pin::pin!(*stream), cx, buf),
+        }
+    }
+}

@@ -1,6 +1,7 @@
 use anyhow::*;
 use core::result::Result::Ok;
 use dotenv::dotenv;
+use rustls_acme::caches::DirCache;
 use tokio::net::TcpListener;
 use tracing::Level;
 use tracing_subscriber::filter;
@@ -12,6 +13,7 @@ mod imap;
 mod smtp_common;
 mod smtp_incoming;
 mod smtp_outgoing;
+mod tls;
 mod utils;
 
 #[tokio::main]
@@ -31,6 +33,9 @@ async fn main() -> Result<()> {
     tracing::info!("{:?}", (&smtp_addr, &smtp_port, &smtp_subm, &imap_port));
 
     let domain = &args.next().unwrap_or("smtp.kaki.foo".to_string());
+    let mut test = rustls_acme::AcmeConfig::new([domain])
+        .contact_push(std::env::var("CONTACT")?)
+        .cache(DirCache::new("./cert_cache"));
 
     let incoming_listener = TcpListener::bind(format!("{smtp_addr}:{smtp_port}")).await?;
     let outgoing_listener = TcpListener::bind(format!("{smtp_addr}:{smtp_subm}")).await?;

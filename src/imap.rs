@@ -4,11 +4,13 @@ use anyhow::{anyhow, Context, Ok, Result};
 use base64::Engine;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
     sync::Mutex,
 };
 
 use crate::{
     database::{self, IMAPFlags},
+    tls::StreamType,
     utils,
 };
 
@@ -30,8 +32,9 @@ struct SelectedState {
 pub struct IMAP {
     //add new fields as needed. prolly need TLS stuff later on
     state: IMAPState,
-    stream: tokio::net::TcpStream,
-    db: Arc<Mutex<database::Client>>,
+    stream: StreamType,
+    db: Arc<Mutex<database::DBClient>>,
+    tls_acceptor: tokio_rustls::TlsAcceptor,
 }
 
 impl IMAP {
@@ -49,11 +52,16 @@ impl IMAP {
     const DATETIME_FMT: &'static str = "%d-%b-%y %H:%M:%S %z";
 
     /// Creates a new server from a connected stream
-    pub async fn new(stream: tokio::net::TcpStream) -> Result<Self> {
+    pub async fn new(
+        stream: tokio::net::TcpStream,
+        acceptor: tokio_rustls::TlsAcceptor,
+    ) -> Result<Self> {
         Ok(Self {
-            stream,
+            //TODO might be implicit tls (already tls in mail fn)
+            stream: StreamType::Plain(stream),
             state: IMAPState::NotAuthed,
-            db: Arc::new(Mutex::new(database::Client::new().await?)),
+            db: Arc::new(Mutex::new(database::DBClient::new().await?)),
+            tls_acceptor: acceptor,
         })
     }
     //weird return type ik, NOTE: inefficient and hacky

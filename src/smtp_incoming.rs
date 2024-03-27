@@ -12,7 +12,7 @@ use crate::database;
 pub struct SmtpIncoming {
     pub stream: tokio::net::TcpStream,
     pub state_machine: SMTPStateMachine,
-    pub db: Arc<Mutex<database::Client>>,
+    pub db: Arc<Mutex<database::DBClient>>,
     pub domain: String,
 }
 
@@ -24,7 +24,7 @@ impl SmtpIncoming {
         Ok(Self {
             stream,
             state_machine: SMTPStateMachine::new(domain.clone(), false),
-            db: Arc::new(Mutex::new(database::Client::new().await?)),
+            db: Arc::new(Mutex::new(database::DBClient::new().await?)),
             domain: domain_stripped,
         })
     }
