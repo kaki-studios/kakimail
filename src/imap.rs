@@ -1,10 +1,9 @@
-use std::{io::BufRead, sync::Arc, u8, vec};
+use std::{io::BufRead, ops::DerefMut, sync::Arc, u8, vec};
 
 use anyhow::{anyhow, Context, Ok, Result};
 use base64::Engine;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    net::TcpStream,
     sync::Mutex,
 };
 
@@ -55,14 +54,25 @@ impl IMAP {
     pub async fn new(
         stream: tokio::net::TcpStream,
         acceptor: tokio_rustls::TlsAcceptor,
+        implicit_tls: bool,
     ) -> Result<Self> {
-        Ok(Self {
-            //TODO might be implicit tls (already tls in mail fn)
-            stream: StreamType::Plain(stream),
-            state: IMAPState::NotAuthed,
-            db: Arc::new(Mutex::new(database::DBClient::new().await?)),
-            tls_acceptor: acceptor,
-        })
+        if !implicit_tls {
+            Ok(Self {
+                stream: StreamType::Plain(stream),
+                state: IMAPState::NotAuthed,
+                db: Arc::new(Mutex::new(database::DBClient::new().await?)),
+                tls_acceptor: acceptor,
+            })
+        } else {
+            let tls_stream = acceptor.accept(stream).await?;
+
+            Ok(Self {
+                stream: StreamType::Tls(tls_stream),
+                state: IMAPState::NotAuthed,
+                db: Arc::new(Mutex::new(database::DBClient::new().await?)),
+                tls_acceptor: acceptor,
+            })
+        }
     }
     //weird return type ik, NOTE: inefficient and hacky
     async fn handle_imap(&mut self, raw_msg: &str) -> Result<Vec<Vec<u8>>> {
@@ -104,8 +114,15 @@ impl IMAP {
             //NOT AUTHED STATE
             //starttls can be issued at "higher" states too
             ("starttls", x) if x >= IMAPState::NotAuthed => {
-                let value = format!("{}, NO starttls not implemented yet\r\n", tag);
-                Ok(vec![value.as_bytes().to_vec()])
+                //TODO return a BAD response if on an implicit tls port
+                self.stream
+                    .write(format!("{} OK Begin TLS negotiation now\r\n", tag).as_bytes())
+                    .await?;
+                //TODO upgrade to tls!!
+                // self()
+                //     .stream
+                //     .upgrade_to_tls(self.tls_acceptor.clone());
+                Ok(vec![])
             }
             ("login", IMAPState::NotAuthed) => {
                 let mut username = msg.next().context("should provide username")?;
@@ -511,9 +528,6 @@ impl IMAP {
                     to: recipients,
                     data: mail_data,
                 };
-                // dbg!(&mail);
-                //TODO:
-                //-date (change db replicate() function)
                 self.db
                     .lock()
                     .await
@@ -538,7 +552,6 @@ impl IMAP {
             (x, IMAPState::Selected(y)) if x == "close" || x == "unselect" => {
                 self.state = IMAPState::Authed(y.user_id);
                 if x == "close" && !y.read_only {
-                    //TODO: delete pending mail permanently
                     self.db.lock().await.expunge(y.mailbox_id, None).await?;
                 }
                 let response = if x == "close" {

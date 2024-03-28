@@ -1,4 +1,4 @@
-use std::{char, ops::Range};
+use std::char;
 
 use crate::smtp_common::Mail;
 use anyhow::{anyhow, Context, Result};

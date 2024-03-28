@@ -1,8 +1,11 @@
 use anyhow::*;
 use core::result::Result::Ok;
 use dotenv::dotenv;
-use rustls_acme::caches::DirCache;
+use rustls_pemfile::rsa_private_keys;
+use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio_rustls::TlsAcceptor;
 use tracing::Level;
 use tracing_subscriber::filter;
 use tracing_subscriber::fmt;
@@ -33,13 +36,50 @@ async fn main() -> Result<()> {
     tracing::info!("{:?}", (&smtp_addr, &smtp_port, &smtp_subm, &imap_port));
 
     let domain = &args.next().unwrap_or("smtp.kaki.foo".to_string());
-    let mut test = rustls_acme::AcmeConfig::new([domain])
-        .contact_push(std::env::var("CONTACT")?)
-        .cache(DirCache::new("./cert_cache"));
+
+    //go from smtp.kaki.foo to kaki.foo
+    let domain_stripped = &domain.split(".").collect::<Vec<&str>>()[1..].join(".");
+    let client = reqwest::Client::new();
+    let mut resp = client
+        .post(format!(
+            "https://porkbun.com/api/json/v3/ssl/retrieve/{}",
+            domain_stripped
+        ))
+        .body(format!(
+            //FIX don't hardcode the json, looks ugly
+            "
+            {{
+                \"secretapikey\": \"{}\",
+                \"apikey\": \"{}\"
+            }}
+            ",
+            std::env::var("PORKBUN_SECRET_API_KEY")?,
+            std::env::var("PORKBUN_API_KEY")?
+        ))
+        .send()
+        .await?
+        .json::<HashMap<String, String>>()
+        .await?;
+    let cert_chain = resp
+        .get_mut("certificatechain")
+        .context("should provide certchain")?;
+    let certs = rustls_pemfile::certs(&mut std::io::Cursor::new(cert_chain.clone()))
+        .flatten()
+        .collect::<Vec<_>>();
+    let key_resp = resp
+        .get("privatekey")
+        .context("should provide private key")?;
+    let key = rustls_pemfile::private_key(&mut std::io::Cursor::new(key_resp.clone()))?
+        .context("should be a valid key")?;
+    let config = tokio_rustls::rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key.into())?;
+    let acceptor = &TlsAcceptor::from(Arc::new(config));
 
     let incoming_listener = TcpListener::bind(format!("{smtp_addr}:{smtp_port}")).await?;
     let outgoing_listener = TcpListener::bind(format!("{smtp_addr}:{smtp_subm}")).await?;
     let imap_listener = TcpListener::bind(format!("{smtp_addr}:{imap_port}")).await?;
+    //TODO implicit imap tls listener!
     tracing::info!("listening on: {}", smtp_addr);
     tracing::info!("smtp port is: {}", smtp_port);
     tracing::info!("submission port is: {}", smtp_subm);
@@ -53,7 +93,7 @@ async fn main() -> Result<()> {
                 tracing::info!("recieved incoming connection from {}", incoming_addr);
                 tokio::task::LocalSet::new()
                     .run_until(async move {
-                        let smtp = smtp_incoming::SmtpIncoming::new(domain.to_string(), incoming_stream).await?;
+                        let smtp = smtp_incoming::SmtpIncoming::new(domain.to_string(), incoming_stream,domain_stripped.to_string()).await?;
                         smtp.serve().await
                     })
                     .await
@@ -73,7 +113,7 @@ async fn main() -> Result<()> {
                 tracing::info!("recieved imap connection from {}", imap_addr);
                 tokio::task::LocalSet::new()
                     .run_until(async move {
-                        let imap = imap::IMAP::new(imap_stream).await?;
+                        let imap = imap::IMAP::new(imap_stream,acceptor.clone(),false).await?;
                         imap.serve().await
                     })
                     .await

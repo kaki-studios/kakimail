@@ -18,9 +18,11 @@ pub struct SmtpIncoming {
 
 impl SmtpIncoming {
     /// Creates a new server from a connected stream
-    pub async fn new(domain: String, stream: tokio::net::TcpStream) -> Result<Self> {
-        //go from smtp.kaki.foo to kaki.foo
-        let domain_stripped = domain.split(".").collect::<Vec<&str>>()[1..].join(".");
+    pub async fn new(
+        domain: String,
+        stream: tokio::net::TcpStream,
+        domain_stripped: String,
+    ) -> Result<Self> {
         Ok(Self {
             stream,
             state_machine: SMTPStateMachine::new(domain.clone(), false),

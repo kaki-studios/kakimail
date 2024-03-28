@@ -32,9 +32,11 @@ impl AsyncWrite for StreamType {
         cx: &mut std::task::Context<'_>,
         buf: &[u8],
     ) -> std::task::Poll<std::prelude::v1::Result<usize, std::io::Error>> {
-        match self.deref() {
-            StreamType::Plain(stream) => AsyncWrite::poll_write(std::pin::pin!(*stream), cx, buf),
-            StreamType::Tls(stream) => AsyncWrite::poll_write(std::pin::pin!(*stream), cx, buf),
+        match self.get_mut() {
+            StreamType::Tls(stream) => AsyncWrite::poll_write(std::pin::Pin::new(stream), cx, buf),
+            StreamType::Plain(stream) => {
+                AsyncWrite::poll_write(std::pin::Pin::new(stream), cx, buf)
+            }
         }
     }
 
@@ -42,18 +44,18 @@ impl AsyncWrite for StreamType {
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::prelude::v1::Result<(), std::io::Error>> {
-        match self.deref() {
-            StreamType::Plain(stream) => AsyncWrite::poll_shutdown(std::pin::pin!(*stream), cx),
-            StreamType::Tls(stream) => AsyncWrite::poll_shutdown(std::pin::pin!(*stream), cx),
+        match self.get_mut() {
+            StreamType::Plain(stream) => AsyncWrite::poll_shutdown(std::pin::Pin::new(stream), cx),
+            StreamType::Tls(stream) => AsyncWrite::poll_shutdown(std::pin::Pin::new(stream), cx),
         }
     }
     fn poll_flush(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::prelude::v1::Result<(), std::io::Error>> {
-        match self.deref() {
-            StreamType::Plain(stream) => AsyncWrite::poll_flush(std::pin::pin!(*stream), cx),
-            StreamType::Tls(stream) => AsyncWrite::poll_flush(std::pin::pin!(*stream), cx),
+        match self.get_mut() {
+            StreamType::Plain(stream) => AsyncWrite::poll_flush(std::pin::Pin::new(stream), cx),
+            StreamType::Tls(stream) => AsyncWrite::poll_flush(std::pin::Pin::new(stream), cx),
         }
     }
 }
@@ -64,9 +66,9 @@ impl AsyncRead for StreamType {
         cx: &mut std::task::Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> std::task::Poll<std::io::Result<()>> {
-        match self.deref() {
-            StreamType::Plain(stream) => AsyncRead::poll_read(std::pin::pin!(*stream), cx, buf),
-            StreamType::Tls(stream) => AsyncRead::poll_read(std::pin::pin!(*stream), cx, buf),
+        match self.get_mut() {
+            StreamType::Plain(stream) => AsyncRead::poll_read(std::pin::Pin::new(stream), cx, buf),
+            StreamType::Tls(stream) => AsyncRead::poll_read(std::pin::Pin::new(stream), cx, buf),
         }
     }
 }
