@@ -29,7 +29,6 @@ struct SelectedState {
 }
 
 pub struct IMAP {
-    //add new fields as needed. prolly need TLS stuff later on
     state: IMAPState,
     stream: StreamType,
     db: Arc<Mutex<database::DBClient>>,
@@ -119,9 +118,7 @@ impl IMAP {
                     .write(format!("{} OK Begin TLS negotiation now\r\n", tag).as_bytes())
                     .await?;
                 //TODO upgrade to tls!!
-                // self()
-                //     .stream
-                //     .upgrade_to_tls(self.tls_acceptor.clone());
+
                 Ok(vec![])
             }
             ("login", IMAPState::NotAuthed) => {

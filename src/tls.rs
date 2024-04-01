@@ -1,6 +1,9 @@
-use std::ops::{Deref, DerefMut};
+use std::{
+    ops::{Deref, DerefMut},
+    sync::Arc,
+};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,
@@ -25,7 +28,22 @@ impl StreamType {
             }
         }
     }
+    // pub async fn upgrade_to_tls_new(&mut self, tls_acceptor: &TlsAcceptor) -> Result<()> {
+    //     let new_stream_type = match self {
+    //         StreamType::Plain(stream) => {
+    //             let tls_stream = tls_acceptor.accept(stream).await?;
+    //             *self = StreamType::Tls(tls_stream);
+    //             Ok(())
+    //         }
+    //         StreamType::Tls(_) => {
+    //             tracing::warn!("Tried to update a tls stream, not going to do anything");
+    //             Ok(())
+    //         }
+    //     };
+    //     new_stream_type
+    // }
 }
+
 impl AsyncWrite for StreamType {
     fn poll_write(
         self: std::pin::Pin<&mut Self>,
