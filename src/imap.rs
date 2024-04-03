@@ -1,4 +1,4 @@
-use std::{io::BufRead, ops::DerefMut, sync::Arc, u8, vec};
+use std::{sync::Arc, u8, vec};
 
 use anyhow::{anyhow, Context, Ok, Result};
 use base64::Engine;
@@ -40,7 +40,7 @@ impl IMAP {
     const GREETING: &'static [u8] = b"* OK IMAP4rev2 Service Ready\r\n";
     const _HOLD_YOUR_HORSES: &'static [u8] = &[];
     const FLAGS: &'static [u8] = b"* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n";
-    const CAPABILITY: &'static [u8] = b"* CAPABILITY IMAP4rev2 IMAP4rev1 AUTH=PLAIN\r\n";
+    const CAPABILITY: &'static [u8] = b"* CAPABILITY IMAP4rev2 STARTTLS IMAP4rev1 AUTH=PLAIN\r\n";
     const PERMANENT_FLAGS: &'static [u8] = b"* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)]\r\n";
     ///shouldn't exist in the future
     const NAMESPACE: &'static [u8] = b"* NAMESPACE ((\"\" \"/\")) NIL NIL\r\n";
@@ -74,8 +74,12 @@ impl IMAP {
         }
     }
     //weird return type ik, NOTE: inefficient and hacky
-    async fn handle_imap(&mut self, raw_msg: &str) -> Result<Vec<Vec<u8>>> {
-        tracing::trace!("Received {raw_msg} in state {:?}", self.state);
+    async fn handle_imap(mut self, raw_msg: &str) -> Result<Self> {
+        //TODO what the hell is this 500 line long function????!!!!
+        //also return self on error so that you can continue imap despite an error
+        //refactoring: make more structs and nest them in IMAP, instead of throwing around a bulky
+        //and inconvenient `mut self` all the time!!!
+        tracing::info!("Received {raw_msg} in state {:?}", self.state);
         let mut msg = raw_msg.split_whitespace();
         let tag = msg.next().context("received empty tag")?;
         let mut command = msg.next().context("received empty command")?.to_lowercase();
@@ -89,7 +93,8 @@ impl IMAP {
         }
 
         let state = self.state.clone();
-        match (command.as_str(), state) {
+        dbg!(&command);
+        let responses = match (command.as_str(), state) {
             //ANY STATE
             ("noop", _) => {
                 let value = format!("{} OK NOOP completed\r\n", tag);
@@ -118,6 +123,10 @@ impl IMAP {
                     .write(format!("{} OK Begin TLS negotiation now\r\n", tag).as_bytes())
                     .await?;
                 //TODO upgrade to tls!!
+                self.stream = self
+                    .stream
+                    .upgrade_to_tls(self.tls_acceptor.clone())
+                    .await?;
 
                 Ok(vec![])
             }
@@ -145,6 +154,7 @@ impl IMAP {
                     .next()
                     .context("should provide auth mechanism")?
                     .to_lowercase();
+                //todo
                 if method != "plain" {
                     Ok(vec![format!(
                         "{} BAD Unsupported Authentication Mechanism",
@@ -195,9 +205,11 @@ impl IMAP {
             (x, IMAPState::Authed(id)) if x == "select" || x == "examine" => {
                 let mailbox = match msg.next().context("should provide mailbox name") {
                     Err(_) => {
-                        return Ok(vec![format!("{} BAD missing arguments\r\n", tag)
+                        let resp = format!("{} BAD missing arguments\r\n", tag)
                             .as_bytes()
-                            .to_vec()])
+                            .to_vec();
+                        self.stream.write_all(&resp).await?;
+                        return Ok(self);
                     }
                     Result::Ok(a) => a.chars().filter(|c| c != &'"').collect::<String>(),
                 };
@@ -205,7 +217,10 @@ impl IMAP {
 
                 let m_id = match db.get_mailbox_id(id, &mailbox).await {
                     Err(x) => {
-                        return Ok(vec![format!("{} BAD {}\r\n", tag, x).as_bytes().to_vec()])
+                        let resp = format!("{} BAD {}\r\n", tag, x).as_bytes().to_vec();
+                        self.stream.write_all(&resp).await?;
+                        //FIX: shouldn't be an error
+                        return Err(anyhow!("shit"));
                     }
                     Result::Ok(a) => a,
                 };
@@ -272,9 +287,11 @@ impl IMAP {
             }
             ("create", IMAPState::Authed(id)) => {
                 let Some(mailbox_name) = msg.next() else {
-                    return Ok(vec![format!("{} BAD didn't provide a name\r\n", tag)
+                    let resp = format!("{} BAD didn't provide a name\r\n", tag)
                         .as_bytes()
-                        .to_vec()]);
+                        .to_vec();
+                    self.stream.write_all(&resp).await?;
+                    return Ok(self);
                 };
                 self.db
                     .lock()
@@ -288,9 +305,14 @@ impl IMAP {
             }
             ("delete", IMAPState::Authed(id)) => {
                 let Some(mailbox_name) = msg.next() else {
-                    return Ok(vec![format!("{} BAD didn't provide a name\r\n", tag)
+                    let resp = format!("{} BAD didn't provide a name\r\n", tag)
                         .as_bytes()
-                        .to_vec()]);
+                        .to_vec();
+                    self.stream.write_all(&resp).await?;
+                    return Ok(self);
+                    // return Ok(vec![format!("{} BAD didn't provide a name\r\n", tag)
+                    //     .as_bytes()
+                    //     .to_vec()]);
                 };
                 let db = self.db.lock().await;
                 let mailbox_id = db.get_mailbox_id(id, mailbox_name).await?;
@@ -301,16 +323,22 @@ impl IMAP {
             }
             ("rename", IMAPState::Authed(id)) => {
                 let Some(mailbox_name) = msg.next() else {
-                    return Ok(vec![format!("{} BAD didn't provide a name\r\n", tag)
+                    let resp = format!("{} BAD didn't provide a name\r\n", tag)
                         .as_bytes()
-                        .to_vec()]);
+                        .to_vec();
+                    self.stream.write_all(&resp).await?;
+                    return Ok(self);
+                };
+                let Result::Ok(mailbox_id) =
+                    self.db.lock().await.get_mailbox_id(id, mailbox_name).await
+                else {
+                    let resp = format!("{} BAD no such mailbox\r\n", tag)
+                        .as_bytes()
+                        .to_vec();
+                    self.stream.write_all(&resp).await?;
+                    return Ok(self);
                 };
                 let db = self.db.lock().await;
-                let Result::Ok(mailbox_id) = db.get_mailbox_id(id, mailbox_name).await else {
-                    return Ok(vec![format!("{} BAD no such mailbox\r\n", tag)
-                        .as_bytes()
-                        .to_vec()]);
-                };
                 db.rename_mailbox(mailbox_name, mailbox_id).await?;
                 if mailbox_name == "INBOX" {
                     //as per the rfc
@@ -355,6 +383,8 @@ impl IMAP {
                     .to_vec()])
             }
             ("list", IMAPState::Authed(id)) => {
+                dbg!(&raw_msg);
+                tracing::info!("got here");
                 //FIX this
                 let mut mailboxes = self
                     .db
@@ -608,7 +638,23 @@ impl IMAP {
                 "Unexpected message received in state {:?}: {raw_msg}",
                 self.state
             ),
+        };
+        let responses = match responses {
+            Result::Ok(t) => t,
+            Err(e) => {
+                tracing::error!("ERROR IN IMAP state machine: \"{:?}\", continuing...", e);
+                vec![]
+            }
+        };
+        for response in responses {
+            self.stream.write_all(&response).await?;
         }
+        if self.state == IMAPState::Logout {
+            //shouldn't be an error
+            return Err(anyhow!("logged out"));
+        }
+        tracing::info!("returning");
+        Ok(self)
     }
     pub async fn serve(mut self) -> Result<()> {
         self.greet().await?;
@@ -622,19 +668,12 @@ impl IMAP {
                 break;
             }
             let msg = std::str::from_utf8(&buf[0..n])?;
-            let responses = match self.handle_imap(msg).await {
-                Result::Ok(t) => t,
-                Err(e) => {
-                    tracing::error!("ERROR IN IMAP state machine: \"{:?}\", continuing...", e);
-                    vec![]
-                }
-            };
-            for response in responses {
-                self.stream.write_all(&response).await?;
-            }
-            if self.state == IMAPState::Logout {
-                break;
-            }
+            dbg!(&msg);
+            self = self.handle_imap(msg).await.map_err(|e| {
+                tracing::error!("{:?}", e);
+                e
+            })?;
+            //clear
             buf = [0; 65536];
         }
         Ok(())

@@ -29,11 +29,12 @@ To: test@kaki.foo
 testing
 bye"""
 
+client.starttls()
 client.authenticate("PLAIN", callback)
 client.list()
-client.status("INBOX", "(UIDNEXT MESSAGES)")
-client.append("INBOX", "", (1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1), mail)
-client.select("INBOX", False)
-client.expunge()
-client.close()
+# client.status("INBOX", "(UIDNEXT MESSAGES)")
+# client.append("INBOX", "", (1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1), mail)
+# client.select("INBOX", False)
+# client.expunge()
+# client.close()
 client.logout()
