@@ -79,6 +79,9 @@ impl IMAP {
         //also return self on error so that you can continue imap despite an error
         //refactoring: make more structs and nest them in IMAP, instead of throwing around a bulky
         //and inconvenient `mut self` all the time!!!
+        if raw_msg == "\r\n" {
+            return Ok(self);
+        }
         tracing::info!("Received {raw_msg} in state {:?}", self.state);
         let mut msg = raw_msg.split_whitespace();
         let tag = msg.next().context("received empty tag")?;
