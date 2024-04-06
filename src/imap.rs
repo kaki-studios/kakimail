@@ -1,4 +1,4 @@
-use std::{sync::Arc, u8, vec};
+use std::{collections::HashMap, sync::Arc, u8, vec};
 
 use anyhow::{anyhow, Context, Ok, Result};
 use base64::Engine;
@@ -9,12 +9,13 @@ use tokio::{
 
 use crate::{
     database::{self, IMAPFlags},
+    imap_op,
     tls::StreamType,
     utils,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd)]
-enum IMAPState {
+pub enum IMAPState {
     NotAuthed,
     ///userid
     Authed(i32),
@@ -22,10 +23,19 @@ enum IMAPState {
     Logout,
 }
 #[derive(PartialEq, PartialOrd, Eq, Debug, Clone)]
-struct SelectedState {
+pub struct SelectedState {
     read_only: bool,
     user_id: i32,
     mailbox_id: i32,
+}
+
+pub trait IMAPOp {
+    async fn process(
+        raw_msg: &str,
+        state: IMAPState,
+        db: Arc<Mutex<database::DBClient>>,
+    ) -> Result<(Vec<Vec<u8>>, IMAPState, bool)>;
+    //the bool is if switching to tls
 }
 
 pub struct IMAP {
@@ -100,8 +110,10 @@ impl IMAP {
         let responses = match (command.as_str(), state) {
             //ANY STATE
             ("noop", _) => {
-                let value = format!("{} OK NOOP completed\r\n", tag);
-                Ok(vec![value.as_bytes().to_vec()])
+                let resp =
+                    imap_op::noop::Noop::process(raw_msg, self.state.clone(), self.db.clone())
+                        .await?;
+                Ok(resp.0)
             }
             ("capability", _) => {
                 let value2 = format!("{} OK CAPABILITY completed\r\n", tag);
@@ -121,11 +133,10 @@ impl IMAP {
             //NOT AUTHED STATE
             //starttls can be issued at "higher" states too
             ("starttls", x) if x >= IMAPState::NotAuthed => {
-                //TODO return a BAD response if on an implicit tls port
+                //TODO return a BAD response if on an implicit tls port or already on tls
                 self.stream
                     .write(format!("{} OK Begin TLS negotiation now\r\n", tag).as_bytes())
                     .await?;
-                //TODO upgrade to tls!!
                 self.stream = self
                     .stream
                     .upgrade_to_tls(self.tls_acceptor.clone())
@@ -138,7 +149,7 @@ impl IMAP {
                 let mut password = msg.next().context("should provice password")?;
                 //NOTE: python's imaplib submits passwords enclosed like this: \"password\"
                 //so we will need to remove them
-                //NOTE: this approach does't support passwords with spaces, but I think that's ok
+                //NOTE: the raw_msg.split_whitespace() approach doesn't support passwords with spaces, but I think that's ok
                 //for now
                 password = &password[1..password.len() - 1];
                 username = &username[1..username.len() - 1];
