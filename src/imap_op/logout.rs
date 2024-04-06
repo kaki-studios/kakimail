@@ -1,19 +1,14 @@
-use anyhow::Context;
-
-use crate::imap::{IMAPOp, IMAPState};
+use crate::imap::{IMAPOp, IMAPState, ResponseInfo};
 
 pub struct Logout;
 
 impl IMAPOp for Logout {
     async fn process(
-        raw_msg: &str,
+        tag: &str,
+        _args: &str,
         _state: crate::imap::IMAPState,
         _db: std::sync::Arc<tokio::sync::Mutex<crate::database::DBClient>>,
-    ) -> anyhow::Result<(Vec<Vec<u8>>, crate::imap::IMAPState, bool)> {
-        let tag = raw_msg
-            .split_whitespace()
-            .next()
-            .context("should provide tag")?;
+    ) -> anyhow::Result<(Vec<Vec<u8>>, crate::imap::IMAPState, ResponseInfo)> {
         let mut resp = Vec::new();
         let untagged = "* BYE IMAP4rev2 Server logging out\r\n".as_bytes().to_vec();
         resp.push(untagged);
@@ -21,6 +16,6 @@ impl IMAPOp for Logout {
             .as_bytes()
             .to_vec();
         resp.push(tagged);
-        Ok((resp, IMAPState::Logout, false))
+        Ok((resp, IMAPState::Logout, ResponseInfo::Regular))
     }
 }

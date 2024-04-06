@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc, u8, vec};
+use std::{sync::Arc, u8, vec};
 
 use anyhow::{anyhow, Context, Ok, Result};
 use base64::Engine;
@@ -29,13 +29,22 @@ pub struct SelectedState {
     mailbox_id: i32,
 }
 
+pub type Response = Vec<Vec<u8>>;
 pub trait IMAPOp {
     async fn process(
-        raw_msg: &str,
+        tag: &str,
+        args: &str,
         state: IMAPState,
         db: Arc<Mutex<database::DBClient>>,
-    ) -> Result<(Vec<Vec<u8>>, IMAPState, bool)>;
+    ) -> Result<(Response, IMAPState, ResponseInfo)>;
     //the bool is if switching to tls
+}
+
+pub enum ResponseInfo {
+    PromoteToTls,
+    ///e.g. for authenticate or append where the args might come in the next msg
+    RedoForNextMsg,
+    Regular,
 }
 
 pub struct IMAP {
@@ -110,9 +119,13 @@ impl IMAP {
         let responses = match (command.as_str(), state) {
             //ANY STATE
             ("noop", _) => {
-                let resp =
-                    imap_op::noop::Noop::process(raw_msg, self.state.clone(), self.db.clone())
-                        .await?;
+                let resp = imap_op::noop::Noop::process(
+                    tag,
+                    &msg.collect::<String>(),
+                    self.state.clone(),
+                    self.db.clone(),
+                )
+                .await?;
                 Ok(resp.0)
             }
             ("capability", _) => {
