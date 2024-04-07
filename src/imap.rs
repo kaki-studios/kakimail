@@ -14,7 +14,7 @@ use crate::{
     utils,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Copy)]
 pub enum IMAPState {
     NotAuthed,
     ///userid
@@ -22,11 +22,12 @@ pub enum IMAPState {
     Selected(SelectedState),
     Logout,
 }
-#[derive(PartialEq, PartialOrd, Eq, Debug, Clone)]
+
+#[derive(PartialEq, PartialOrd, Eq, Debug, Clone, Copy)]
 pub struct SelectedState {
-    read_only: bool,
-    user_id: i32,
-    mailbox_id: i32,
+    pub read_only: bool,
+    pub user_id: i32,
+    pub mailbox_id: i32,
 }
 
 pub type Response = Vec<Vec<u8>>;
@@ -37,7 +38,6 @@ pub trait IMAPOp {
         state: IMAPState,
         db: Arc<Mutex<database::DBClient>>,
     ) -> Result<(Response, IMAPState, ResponseInfo)>;
-    //the bool is if switching to tls
 }
 
 pub enum ResponseInfo {
@@ -95,9 +95,7 @@ impl IMAP {
     //weird return type ik, NOTE: inefficient and hacky
     async fn handle_imap(mut self, raw_msg: &str) -> Result<Self> {
         //TODO what the hell is this 500 line long function????!!!!
-        //also return self on error so that you can continue imap despite an error
-        //refactoring: make more structs and nest them in IMAP, instead of throwing around a bulky
-        //and inconvenient `mut self` all the time!!!
+        //rn refactoring, see src/imap_op
         if raw_msg == "\r\n" {
             return Ok(self);
         }
@@ -410,7 +408,6 @@ impl IMAP {
                     .to_vec()])
             }
             ("list", IMAPState::Authed(id)) => {
-                dbg!(&raw_msg);
                 tracing::info!("got here");
                 //FIX this
                 let mut mailboxes = self

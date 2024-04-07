@@ -1,4 +1,4 @@
-use anyhow::{Context, Ok};
+use anyhow::{anyhow, Context, Ok};
 use base64::Engine;
 
 use crate::{
@@ -19,6 +19,9 @@ impl IMAPOp for Authenticate {
         crate::imap::IMAPState,
         crate::imap::ResponseInfo,
     )> {
+        if state != IMAPState::NotAuthed {
+            return Err(anyhow!("bad state"));
+        }
         let mut msg = args.split_whitespace();
         let method = msg
             .next()
@@ -33,9 +36,7 @@ impl IMAPOp for Authenticate {
                 state,
                 ResponseInfo::Regular,
             ))
-            //not supported
         } else {
-            //kinda sketchy, can overflow and also allocates 1kb of memory!
             let encoded = match msg.next() {
                 None => {
                     //login will be in next message
