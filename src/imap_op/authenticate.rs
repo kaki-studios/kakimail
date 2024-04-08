@@ -6,7 +6,7 @@ use crate::{
     utils,
 };
 
-struct Authenticate;
+pub struct Authenticate;
 
 impl IMAPOp for Authenticate {
     async fn process(

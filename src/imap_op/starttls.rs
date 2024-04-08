@@ -2,7 +2,7 @@ use anyhow::Ok;
 
 use crate::imap::{IMAPOp, ResponseInfo};
 
-struct StartTls;
+pub struct StartTls;
 
 impl IMAPOp for StartTls {
     async fn process(

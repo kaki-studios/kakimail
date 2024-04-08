@@ -2,7 +2,7 @@ use anyhow::{anyhow, Ok};
 
 use crate::imap::{IMAPOp, IMAPState, ResponseInfo};
 
-struct Create;
+pub struct Create;
 
 impl IMAPOp for Create {
     async fn process(

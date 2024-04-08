@@ -2,7 +2,7 @@ use anyhow::{anyhow, Context};
 
 use crate::imap::{IMAPOp, IMAPState, ResponseInfo, SelectedState};
 
-struct Select;
+pub struct Select;
 
 const FLAGS: &'static [u8] = b"* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n";
 
