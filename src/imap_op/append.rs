@@ -36,11 +36,23 @@ impl IMAPOp for Append {
                 //just in case
                 continue;
             }
+            if count_raw.is_some() {
+                //it's the last argument before the mail,
+                //we should brak
+            }
             match arg.chars().next().unwrap_or(' ') {
-                //dummy
-                '(' => flags_raw = Some(arg),
-                '{' => count_raw = Some(arg),
-                '"' => datetime_raw = Some(arg),
+                '(' => {
+                    flags_raw = Some(arg);
+                }
+                '{' => {
+                    count_raw = Some(arg);
+                    break;
+                    //this is the last arg, we should break
+                }
+                '"' => {
+                    //TODO this doesn't work
+                    datetime_raw = Some(arg);
+                }
                 _ => {}
             }
         }

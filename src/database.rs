@@ -171,7 +171,7 @@ impl DBClient {
             return Ok(x);
         }
         if mailbox_name != "INBOX" {
-            return Err(anyhow!("no such mailbox"));
+            return Err(anyhow!("no such mailbox: {}", mailbox_name));
         }
         //we need to create the inbox mailbox bc it must exist
         self.db

@@ -39,6 +39,7 @@ impl IMAPOp for Authenticate {
         } else {
             let encoded = match msg.next() {
                 None => {
+                    tracing::info!("no next msg");
                     //login will be in next message
                     let resp = b"+\r\n".to_vec();
                     return Ok((vec![resp], state, ResponseInfo::RedoForNextMsg));
