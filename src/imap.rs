@@ -93,51 +93,46 @@ impl IMAP {
             })
         }
     }
-    //weird return type ik, NOTE: inefficient and hacky
-    async fn handle_imap(mut self, raw_msg: &str) -> Result<Self> {
+    //not self bc we need ownership of the stream
+    //but not ownership of self
+    //and can't pass &mut self bc it would be
+    //partially moved
+    async fn handle_imap(
+        mut stream: StreamType,
+        db: Arc<Mutex<database::DBClient>>,
+        mut state: IMAPState,
+        tls_acceptor: tokio_rustls::TlsAcceptor,
+        raw_msg: &str,
+    ) -> Result<(IMAPState, StreamType)> {
         if raw_msg == "\r\n" {
-            return Ok(self);
+            return Ok((state, stream));
         }
-        tracing::info!("Received {raw_msg} in state {:?}", self.state);
+        tracing::info!("Received {raw_msg} in state {:?}", state);
         let mut msg = raw_msg.split_whitespace();
         let tag = msg.next().context("received empty tag")?;
         let command = msg.next().context("received empty command")?.to_lowercase();
-        // let mut uid = false;
-        // if command.as_str() == "uid" {
-        //     uid = true;
-        //     command = msg
-        //         .next()
-        //         .context("uid command should provide actual command")?
-        //         .to_lowercase();
-        // }
 
         dbg!(&command);
         let new = msg.clone();
         let args = new.collect::<Vec<&str>>().join(" ");
         //TODO
-        //-implement the uid command (2 ways)
-        //1. add extra `uid: bool` argument to IMAPOp's process()
+        //-implement the uid command
         //2. add extra `uid.rs` file like the other commands, and
         //make a base function for commands that can have uid
-        //(2. is better)
         let (resp, new_state, info) =
-            exec_command(&command, tag, &args, self.state.clone(), self.db.clone()).await??;
+            exec_command(&command, tag, &args, state, db.clone()).await??;
         for item in &resp {
-            self.stream.write_all(&item).await?;
+            stream.write_all(&item).await?;
         }
-        self.state = new_state;
+        state = new_state;
         match info {
             ResponseInfo::Regular => {}
             ResponseInfo::PromoteToTls => {
-                self.stream = self
-                    .stream
-                    .upgrade_to_tls(self.tls_acceptor.clone())
-                    .await?;
+                stream = stream.upgrade_to_tls(tls_acceptor).await?;
             }
             ResponseInfo::RedoForNextMsg => {
-                //TODO
                 let mut buf = [0; 1024];
-                let n = self.stream.read(&mut buf).await?;
+                let n = stream.read(&mut buf).await?;
 
                 let extra = std::str::from_utf8(&buf[..n])?;
                 dbg!(&args);
@@ -148,24 +143,18 @@ impl IMAP {
                 dbg!(&new);
 
                 let (resp, new_state, info) =
-                    exec_command(&command, tag, &new, self.state.clone(), self.db.clone())
-                        .await??;
+                    exec_command(&command, tag, &new, state, db).await??;
                 for item in resp {
-                    self.stream.write_all(&item).await?;
+                    stream.write_all(&item).await?;
                 }
                 if info == ResponseInfo::RedoForNextMsg {
                     return Err(anyhow!("2 times RedoForNextMsg!"));
                 }
-                self.state = new_state;
+                state = new_state;
             }
         }
 
-        if self.state == IMAPState::Logout {
-            //shouldn't be an error
-            return Err(anyhow!("logged out"));
-        }
-        tracing::info!("returning");
-        Ok(self)
+        Ok((state, stream))
     }
     pub async fn serve(mut self) -> Result<()> {
         self.greet().await?;
@@ -175,15 +164,36 @@ impl IMAP {
 
             if n == 0 {
                 tracing::info!("Received EOF");
-                self.handle_imap("logout").await.ok();
+                Self::handle_imap(
+                    self.stream,
+                    self.db,
+                    self.state,
+                    self.tls_acceptor,
+                    "logout",
+                )
+                .await
+                .ok();
                 break;
             }
             let msg = std::str::from_utf8(&buf[0..n])?;
             dbg!(&msg);
-            self = self.handle_imap(msg).await.map_err(|e| {
+            let (state, stream) = Self::handle_imap(
+                self.stream,
+                self.db.clone(),
+                self.state,
+                self.tls_acceptor.clone(),
+                msg,
+            )
+            .await
+            .map_err(|e| {
                 tracing::error!("{:?}", e);
                 e
             })?;
+            self.stream = stream;
+            self.state = state;
+            if self.state == IMAPState::Logout {
+                break;
+            }
             //clear
             buf = [0; 65536];
         }
