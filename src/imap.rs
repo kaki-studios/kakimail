@@ -119,8 +119,7 @@ impl IMAP {
         //-implement the uid command
         //2. add extra `uid.rs` file like the other commands, and
         //make a base function for commands that can have uid
-        let (resp, new_state, info) =
-            exec_command(&command, tag, &args, state, db.clone()).await??;
+        let (resp, new_state, info) = exec_command(&command, tag, &args, state, db.clone()).await?;
         for item in &resp {
             stream.write_all(&item).await?;
         }
@@ -142,8 +141,7 @@ impl IMAP {
                 //TODO not working
                 dbg!(&new);
 
-                let (resp, new_state, info) =
-                    exec_command(&command, tag, &new, state, db).await??;
+                let (resp, new_state, info) = exec_command(&command, tag, &new, state, db).await?;
                 for item in resp {
                     stream.write_all(&item).await?;
                 }
@@ -214,31 +212,35 @@ async fn exec_command(
     args: &str,
     state: IMAPState,
     db: Arc<Mutex<database::DBClient>>,
-) -> Result<Result<(Response, IMAPState, ResponseInfo)>> {
+) -> Result<(Response, IMAPState, ResponseInfo)> {
     match command.to_lowercase().as_str() {
-        "append" => Ok(imap_op::append::Append::process(tag, args, state, db).await),
-        "capability" => Ok(imap_op::capability::Capability::process(tag, args, state, db).await),
-        "create" => Ok(imap_op::create::Create::process(tag, args, state, db).await),
-        "enable" => Ok(imap_op::enable::Enable::process(tag, args, state, db).await),
-        "expunge" => Ok(imap_op::expunge::Expunge::process(tag, args, state, db).await),
-        "login" => Ok(imap_op::login::Login::process(tag, args, state, db).await),
-        "noop" => Ok(imap_op::noop::Noop::process(tag, args, state, db).await),
-        "select" => Ok(imap_op::select::Select::process(tag, args, state, db).await),
-        "status" => Ok(imap_op::status::Status::process(tag, args, state, db).await),
-        "unselect" => Ok(imap_op::unselect::Unselect::process(tag, args, state, db).await),
+        "append" => Ok(imap_op::append::Append::process(tag, args, state, db).await?),
+        "capability" => Ok(imap_op::capability::Capability::process(tag, args, state, db).await?),
+        "create" => Ok(imap_op::create::Create::process(tag, args, state, db).await?),
+        "enable" => Ok(imap_op::enable::Enable::process(tag, args, state, db).await?),
+        "expunge" => Ok(imap_op::expunge::Expunge::process(tag, args, state, db).await?),
+        "login" => Ok(imap_op::login::Login::process(tag, args, state, db).await?),
+        "noop" => Ok(imap_op::noop::Noop::process(tag, args, state, db).await?),
+        "select" => Ok(imap_op::select::Select::process(tag, args, state, db).await?),
+        "status" => Ok(imap_op::status::Status::process(tag, args, state, db).await?),
+        "unselect" => Ok(imap_op::unselect::Unselect::process(tag, args, state, db).await?),
         "authenticate" => {
-            Ok(imap_op::authenticate::Authenticate::process(tag, args, state, db).await)
+            Ok(imap_op::authenticate::Authenticate::process(tag, args, state, db).await?)
         }
-        "close" => Ok(imap_op::close::Close::process(tag, args, state, db).await),
-        "delete" => Ok(imap_op::delete::Delete::process(tag, args, state, db).await),
-        "examine" => Ok(imap_op::examine::Examine::process(tag, args, state, db).await),
-        "list" => Ok(imap_op::list::List::process(tag, args, state, db).await),
-        "logout" => Ok(imap_op::logout::Logout::process(tag, args, state, db).await),
-        "namespace" => Ok(imap_op::namespace::Namespace::process(tag, args, state, db).await),
-        "rename" => Ok(imap_op::rename::Rename::process(tag, args, state, db).await),
-        "starttls" => Ok(imap_op::starttls::StartTls::process(tag, args, state, db).await),
-        "subscribe" => Ok(imap_op::subscribe::Subscribe::process(tag, args, state, db).await),
-        "unsubscribe" => Ok(imap_op::unsubscribe::Unsubscribe::process(tag, args, state, db).await),
+        "close" => Ok(imap_op::close::Close::process(tag, args, state, db).await?),
+        "delete" => Ok(imap_op::delete::Delete::process(tag, args, state, db).await?),
+        "examine" => Ok(imap_op::examine::Examine::process(tag, args, state, db).await?),
+        "list" => Ok(imap_op::list::List::process(tag, args, state, db).await?),
+        "logout" => Ok(imap_op::logout::Logout::process(tag, args, state, db).await?),
+        "namespace" => Ok(imap_op::namespace::Namespace::process(tag, args, state, db).await?),
+        "rename" => Ok(imap_op::rename::Rename::process(tag, args, state, db).await?),
+        "starttls" => Ok(imap_op::starttls::StartTls::process(tag, args, state, db).await?),
+        "subscribe" => Ok(imap_op::subscribe::Subscribe::process(tag, args, state, db).await?),
+        "unsubscribe" => {
+            Ok(imap_op::unsubscribe::Unsubscribe::process(tag, args, state, db).await?)
+        }
+        "uid" => Ok(imap_op::uid::Uid::process(tag, args, state, db).await?),
+        "idle" => Ok(imap_op::idle::Idle::process(tag, args, state, db).await?),
         _ => Err(anyhow!("invalid command")),
     }
 }

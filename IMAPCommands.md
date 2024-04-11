@@ -5,7 +5,7 @@
 - [X] noop
 - [X] logout
 ### not authenticated state:
-- [ ] starttls
+- [X] starttls
 - [X] authenticate
 - [X] login
 ### authenticated state:
