@@ -21,8 +21,13 @@ impl IMAPOp for Login {
         //so we will need to remove them
         //NOTE: the raw_msg.split_whitespace() approach doesn't support passwords with spaces, but I think that's ok
         //for now
-        password = &password[1..password.len() - 1];
-        username = &username[1..username.len() - 1];
+        if password.starts_with("\"") && password.ends_with("\"") {
+            password = &password[1..password.len() - 1];
+        }
+        if username.starts_with("\"") && username.ends_with("\"") {
+            username = &username[1..username.len() - 1];
+        }
+
         let resp = if let Some(x) = db.lock().await.check_user(username, password).await {
             let good_msg = format!("{} OK LOGIN COMPLETED\r\n", tag);
             state = IMAPState::Authed(x);
