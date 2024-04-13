@@ -100,16 +100,12 @@ impl SmtpOutgoing {
         for rcpt in &mail.to {
             if let Some((_, domain)) = rcpt.split_once("@") {
                 let domain = domain
-                    .strip_suffix(">") //NOTE: hacky
-                    .expect("emails to be formatted inside angle brackets"); //hacky
-                let _real_ip = resolver.resolve_mx(domain).await?;
-                //NOTE: here we are sending email to ourselves so that we don't get blacklisted or
-                //something else
-                let ip = "127.0.0.1";
-                let port = "7780";
-                //our own port
-                //BIG NOTE: this will timeout on port 25 unless you request to unblock port 25
-                let mut connection = TcpStream::connect(format!("{ip}:{port}")).await?;
+                    .strip_suffix(">")
+                    .context("should be formatted inside angle brackets")?; //NOTE: hacky
+                let ip = resolver.resolve_mx(domain).await?;
+                // let ip = "127.0.0.1";
+                //BIG TODO: this will timeout on port 25 unless you request to unblock port 25
+                let mut connection = TcpStream::connect((ip, 25)).await?;
                 tracing::debug!("connection succesful");
                 // let mut buf = vec![0; 65536];
                 let mut buf: [u8; 65536] = [0; 65536];

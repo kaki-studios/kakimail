@@ -1,7 +1,5 @@
-use std::result;
 use std::sync::Arc;
 
-use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
 use base64::Engine;
@@ -188,9 +186,8 @@ impl SMTPStateMachine {
                     .next()
                     .context("should provide auth type")?
                     .to_lowercase();
-                dbg!(&auth_type);
                 //TODO support other types
-                if auth_type != "plain" && auth_type != "login" {
+                if auth_type != "plain" {
                     tracing::warn!("used other auth mechanism: {}", auth_type);
                     self.state = SMTPState::Greeted;
                     return Ok(Self::AUTH_NOT_OK);
@@ -200,7 +197,6 @@ impl SMTPStateMachine {
                     tracing::error!("didn't have auth info");
                     e
                 });
-                dbg!(&encoded);
                 match crate::utils::DECODER.decode(encoded?) {
                     Err(x) => {
                         self.state = SMTPState::Greeted;
@@ -209,11 +205,6 @@ impl SMTPStateMachine {
                     }
                     Result::Ok(decoded) => {
                         let (usrname, password) = utils::seperate_login(decoded)?;
-                        tracing::info!(
-                            "succesful decode, username: {}, password: {}",
-                            usrname,
-                            password
-                        );
 
                         let result = db.lock().await.check_user(&usrname, &password).await;
 
