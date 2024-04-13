@@ -40,7 +40,7 @@ pub struct SMTPStateMachine {
 /// that should be sent back to the client.
 /// Copied from edgemail, temporary
 impl SMTPStateMachine {
-    pub const OH_HAI: &'static [u8] = b"220 kakimail\r\n";
+    pub const OH_HAI: &'static [u8] = b"220 smtp.kaki.foo ESMTP Server\r\n";
     pub const KK: &'static [u8] = b"250 Ok\r\n";
     pub const AUTH_OK: &'static [u8] = b"235 Ok\r\n";
     pub const AUTH_NOT_OK: &'static [u8] = b"535 Authentication error\r\n";
@@ -51,7 +51,7 @@ impl SMTPStateMachine {
 
     pub fn new(domain: impl AsRef<str>, outgoing: bool) -> Self {
         let domain = domain.as_ref();
-        let ehlo_greeting = format!("250-{domain} Hello {domain}\n250 AUTH PLAIN LOGIN\n");
+        let ehlo_greeting = format!("250-{domain} Hello {domain}\r\n250 AUTH PLAIN LOGIN\r\n");
         Self {
             state: SMTPState::Fresh,
             ehlo_greeting,
@@ -181,22 +181,44 @@ impl SMTPStateMachine {
         tracing::trace!("Received {raw_msg} in state {:?}", self.state);
         let mut msg = raw_msg.split_whitespace();
         let command = msg.next().context("received empty command")?.to_lowercase();
+        dbg!(&command);
         match command.as_str() {
             "auth" => {
+                let auth_type = msg
+                    .next()
+                    .context("should provide auth type")?
+                    .to_lowercase();
+                dbg!(&auth_type);
+                //TODO support other types
+                if auth_type != "plain" && auth_type != "login" {
+                    tracing::warn!("used other auth mechanism: {}", auth_type);
+                    self.state = SMTPState::Greeted;
+                    return Ok(Self::AUTH_NOT_OK);
+                }
                 tracing::trace!("Acknowledging AUTH");
-                let encoded = msg.nth(1).context("should provide auth info")?;
-                match crate::utils::DECODER.decode(encoded) {
-                    Err(_) => {
+                let encoded = msg.next().context("should provide auth info").map_err(|e| {
+                    tracing::error!("didn't have auth info");
+                    e
+                });
+                dbg!(&encoded);
+                match crate::utils::DECODER.decode(encoded?) {
+                    Err(x) => {
                         self.state = SMTPState::Greeted;
+                        tracing::error!("decode error: {}", x);
                         Ok(Self::AUTH_NOT_OK)
                     }
                     Result::Ok(decoded) => {
                         let (usrname, password) = utils::seperate_login(decoded)?;
+                        tracing::info!(
+                            "succesful decode, username: {}, password: {}",
+                            usrname,
+                            password
+                        );
 
                         let result = db.lock().await.check_user(&usrname, &password).await;
 
                         if let Some(_a) = result {
-                            //FIX _a should be stored to verify that the sender is actually the
+                            //TODO _a should be stored to verify that the sender is actually the
                             //correct person, currently you can send emails on others behalf
                             //because of this
 

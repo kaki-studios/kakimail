@@ -29,6 +29,7 @@ impl SmtpOutgoing {
     }
     pub async fn serve(mut self) -> Result<()> {
         self.greet().await?;
+        tracing::info!("greeted!");
         // let mut buf = vec![0; 65536];
         let mut buf: &mut [u8] = &mut [0; 65536];
         loop {
@@ -89,7 +90,10 @@ impl SmtpOutgoing {
         self.stream
             .write_all(SMTPStateMachine::OH_HAI)
             .await
-            .map_err(|e| e.into())
+            .map_err(|e| {
+                tracing::error!("error greeting: {}", e);
+                e.into()
+            })
     }
     async fn send_mail(mail: &crate::smtp_common::Mail) -> Result<()> {
         let resolver = utils::DnsResolver::default_new();
