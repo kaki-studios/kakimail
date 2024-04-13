@@ -42,6 +42,7 @@ impl SmtpOutgoing {
                 break;
             }
             let msg = std::str::from_utf8(&buf[0..n])?;
+            dbg!(&msg);
             let response = self
                 .state_machine
                 .handle_smtp_outgoing(msg, self.db.clone())
