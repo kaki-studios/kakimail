@@ -4,7 +4,7 @@ use crate::smtp_common::*;
 use anyhow::*;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    sync::Mutex,
+    sync::{mpsc::Sender, Mutex},
 };
 
 use crate::database;
@@ -22,11 +22,12 @@ impl SmtpIncoming {
         domain: String,
         stream: tokio::net::TcpStream,
         domain_stripped: String,
+        tx: Sender<String>,
     ) -> Result<Self> {
         Ok(Self {
             stream,
             state_machine: SMTPStateMachine::new(domain.clone(), false),
-            db: Arc::new(Mutex::new(database::DBClient::new().await?)),
+            db: Arc::new(Mutex::new(database::DBClient::new(tx).await?)),
             domain: domain_stripped,
         })
     }

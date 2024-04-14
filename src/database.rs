@@ -4,9 +4,11 @@ use crate::smtp_common::Mail;
 use anyhow::{anyhow, Context, Result};
 use chrono::FixedOffset;
 use libsql_client::{args, client::Client, Statement, Value};
+use tokio::sync::mpsc::{Receiver, Sender};
 
 pub struct DBClient {
     db: Client,
+    changes: tokio::sync::mpsc::Sender<String>,
 }
 
 impl DBClient {
@@ -14,7 +16,7 @@ impl DBClient {
     /// If the LIBSQL_CLIENT_URL environment variable is not set, a local database will be used.
     /// It's also possible to use a remote database by setting the LIBSQL_CLIENT_URL environment variable.
     /// The `mail` table will be automatically created if it does not exist.
-    pub async fn new() -> Result<Self> {
+    pub async fn new(tx: Sender<String>) -> Result<Self> {
         if std::env::var("LIBSQL_CLIENT_URL").is_err() {
             let mut db_path_buf = std::env::current_dir()?;
             db_path_buf.push("data/kakimail.db");
@@ -66,7 +68,7 @@ impl DBClient {
                 tracing::error!("3. {:?}", e);
                 e
             })?;
-        Ok(Self { db })
+        Ok(Self { db, changes: tx })
     }
     pub async fn biggest_uid(&self) -> Result<i64> {
         let count: i64 = i64::try_from(
@@ -91,6 +93,7 @@ impl DBClient {
         mailbox_id: i32,
         datetime: Option<chrono::DateTime<FixedOffset>>,
     ) -> Result<()> {
+        self.changes.send("* 1 EXISTS\r\n".to_owned()).await?;
         let time = if let Some(x) = datetime {
             //TODO extract the format string
             x.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
@@ -231,10 +234,8 @@ impl DBClient {
             ))
             .await
             .ok()?;
-        dbg!("ok1");
         //fighting with the compiler
         let mut values = values.rows.first()?.values.iter();
-        dbg!("ok2");
         let id = i32::try_from(values.next()?).ok()?;
         let Value::Blob { value: hash } = values.next()? else {
             return None;
@@ -329,6 +330,7 @@ impl DBClient {
         }
     }
     pub async fn expunge(&self, mailbox_id: i32, uid: Option<(i32, i32)>) -> Result<Vec<i32>> {
+        self.changes.send("* 1 EXPUNGE\r\n".to_owned()).await?;
         //deleted is 3rd bit
         let deleted = "__1__";
         let statement = if let Some((start, end)) = uid {

@@ -1,4 +1,3 @@
-version: '3'
 # NOTE: to use this, your file structure should look like this:
 # .
 # ├── docker-compose.yml

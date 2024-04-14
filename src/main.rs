@@ -4,6 +4,7 @@ use dotenv::dotenv;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio::sync::Mutex;
 use tokio_rustls::TlsAcceptor;
 use tracing::Level;
 use tracing_subscriber::filter;
@@ -46,7 +47,7 @@ async fn main() -> Result<()> {
             domain_stripped
         ))
         .body(format!(
-            //FIX don't hardcode the json, looks ugly
+            //TODO don't hardcode the json, looks ugly
             "
             {{
                 \"secretapikey\": \"{}\",
@@ -85,15 +86,19 @@ async fn main() -> Result<()> {
     tracing::info!("submission port is: {}", smtp_subm);
     tracing::info!("imap port is: {}", imap_port);
     tracing::info!("smtp server for {domain} started!");
+    let (tx, rx) = tokio::sync::mpsc::channel::<String>(128);
 
+    let new_rx = Arc::new(Mutex::new(rx));
+    let new_tx = &tx;
     //main server loop
     loop {
+        let loop_rx = new_rx.clone();
         tokio::select! {
             Ok((incoming_stream, incoming_addr)) = incoming_listener.accept() => {
                 tracing::info!("recieved incoming connection from {}", incoming_addr);
                 tokio::task::LocalSet::new()
                     .run_until(async move {
-                        let smtp = smtp_incoming::SmtpIncoming::new(domain.to_string(), incoming_stream,domain_stripped.to_string()).await?;
+                        let smtp = smtp_incoming::SmtpIncoming::new(domain.to_string(), incoming_stream,domain_stripped.to_string(),new_tx.clone()).await?;
                         smtp.serve().await
                     })
                     .await
@@ -103,7 +108,7 @@ async fn main() -> Result<()> {
                 tracing::info!("recieved outgoing connection from {}", outgoing_addr);
                 tokio::task::LocalSet::new()
                     .run_until(async move {
-                        let smtp = smtp_outgoing::SmtpOutgoing::new(domain.to_string(), outgoing_stream).await?;
+                        let smtp = smtp_outgoing::SmtpOutgoing::new(domain.to_string(), outgoing_stream, new_tx.clone()).await?;
                         smtp.serve().await
                     })
                     .await
@@ -113,7 +118,7 @@ async fn main() -> Result<()> {
                 tracing::info!("recieved imap connection from {}", imap_addr);
                 tokio::task::LocalSet::new()
                     .run_until(async move {
-                        let imap = imap::IMAP::new(imap_stream,acceptor.clone(),false).await?;
+                        let imap = imap::IMAP::new(imap_stream,acceptor.clone(),false, new_tx.clone(),loop_rx).await?;
                         imap.serve().await
                     })
                     .await

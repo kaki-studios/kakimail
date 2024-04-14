@@ -30,10 +30,8 @@ impl IMAPOp for Status {
             .collect::<Vec<_>>();
         let db = db.lock().await;
         let mailbox_id = db.get_mailbox_id(id, mailbox_name).await?;
-        //hate this type
         let mut result: Vec<Vec<u8>> = vec![];
 
-        dbg!(&rest);
         for attr in rest {
             match attr.as_str() {
                 "MESSAGES" => {

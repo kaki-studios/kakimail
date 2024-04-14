@@ -14,7 +14,7 @@ pub struct DnsResolver {
 impl DnsResolver {
     ///this function gets the highest preference ip address from a domain
     pub async fn resolve_mx(&self, domain: &str) -> Result<std::net::IpAddr> {
-        //FIX: dirty code
+        //TODO: dirty code
         //lookup returns a list of records it maps to
         let lookup = self.resolver.mx_lookup(domain.to_owned() + ".").await?;
         //apparently lowest number is highest preference, this is why it's sometimes called

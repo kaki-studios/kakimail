@@ -1,9 +1,11 @@
+use std::time::Duration;
 use std::{sync::Arc, u8};
 
 use anyhow::{anyhow, Context, Ok, Result};
+use tokio::sync::mpsc::Receiver;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
-    sync::Mutex,
+    sync::{mpsc::Sender, Mutex},
 };
 
 use crate::{
@@ -46,6 +48,7 @@ pub enum ResponseInfo {
     ///e.g. for authenticate or append where the args might come in the next msg
     RedoForNextMsg,
     Regular,
+    Idle,
 }
 
 pub struct IMAP {
@@ -53,6 +56,7 @@ pub struct IMAP {
     stream: StreamType,
     db: Arc<Mutex<database::DBClient>>,
     tls_acceptor: tokio_rustls::TlsAcceptor,
+    change_receiver: Arc<Mutex<Receiver<String>>>,
 }
 
 impl IMAP {
@@ -74,24 +78,22 @@ impl IMAP {
         stream: tokio::net::TcpStream,
         acceptor: tokio_rustls::TlsAcceptor,
         implicit_tls: bool,
+        tx: Sender<String>,
+        rx: Arc<Mutex<Receiver<String>>>,
     ) -> Result<Self> {
-        if !implicit_tls {
-            Ok(Self {
-                stream: StreamType::Plain(stream),
-                state: IMAPState::NotAuthed,
-                db: Arc::new(Mutex::new(database::DBClient::new().await?)),
-                tls_acceptor: acceptor,
-            })
+        let stream_type = if !implicit_tls {
+            StreamType::Plain(stream)
         } else {
             let tls_stream = acceptor.accept(stream).await?;
-
-            Ok(Self {
-                stream: StreamType::Tls(tls_stream),
-                state: IMAPState::NotAuthed,
-                db: Arc::new(Mutex::new(database::DBClient::new().await?)),
-                tls_acceptor: acceptor,
-            })
-        }
+            StreamType::Tls(tls_stream)
+        };
+        Ok(Self {
+            stream: stream_type,
+            state: IMAPState::NotAuthed,
+            db: Arc::new(Mutex::new(database::DBClient::new(tx).await?)),
+            tls_acceptor: acceptor,
+            change_receiver: rx,
+        })
     }
     //not self bc we need ownership of the stream
     //but not ownership of self
@@ -103,6 +105,7 @@ impl IMAP {
         mut state: IMAPState,
         tls_acceptor: tokio_rustls::TlsAcceptor,
         raw_msg: &str,
+        changes: Arc<Mutex<Receiver<String>>>,
     ) -> Result<(IMAPState, StreamType)> {
         if raw_msg == "\r\n" {
             return Ok((state, stream));
@@ -134,11 +137,8 @@ impl IMAP {
                 let n = stream.read(&mut buf).await?;
 
                 let extra = std::str::from_utf8(&buf[..n])?;
-                dbg!(&args);
-                //test
                 let mut new = args.strip_suffix("\r\n").unwrap_or(&args).to_owned();
                 new.push_str(&format!(" {}", extra));
-                //TODO not working
                 dbg!(&new);
 
                 let (resp, new_state, info) = exec_command(&command, tag, &new, state, db).await?;
@@ -149,6 +149,42 @@ impl IMAP {
                     return Err(anyhow!("2 times RedoForNextMsg!"));
                 }
                 state = new_state;
+            }
+            ResponseInfo::Idle => {
+                let mut change_rx = changes.lock().await;
+                let mut buf = [0u8; 1024];
+                use core::result::Result::Ok;
+                tokio::select! {
+                    result = tokio::time::timeout(Duration::from_secs(30 * 60), stream.read(&mut buf)) => {
+
+                        match result {
+
+                            Ok(Ok(bytes_read)) =>{
+                                    if bytes_read == 0 {
+                                        return Err(anyhow!("read 0 bytes!"))
+                                    }
+                                if &buf[..bytes_read] == b"DONE\r\n" {
+                                    stream.write_all(format!("{} OK IDLE terminated\r\n", tag).as_bytes()).await?;
+                                    }
+                            },
+                            Ok(Err(err)) => {
+                                tracing::error!("imap error: {}", err);
+                            },
+                            Err(_) => {
+                                stream.write_all(b"*BYE IDLE timed out\r\n").await?;
+                            }
+                        }
+                    }
+
+                    change = change_rx.recv() => {
+                        if let Some(change_str) = change {
+                            dbg!(&change_str);
+
+
+                        }
+
+                    }
+                }
             }
         }
 
@@ -168,19 +204,20 @@ impl IMAP {
                     self.state,
                     self.tls_acceptor,
                     "logout",
+                    self.change_receiver,
                 )
                 .await
                 .ok();
                 break;
             }
             let msg = std::str::from_utf8(&buf[0..n])?;
-            dbg!(&msg);
             let (state, stream) = Self::handle_imap(
                 self.stream,
                 self.db.clone(),
                 self.state,
                 self.tls_acceptor.clone(),
                 msg,
+                self.change_receiver.clone(),
             )
             .await
             .map_err(|e| {

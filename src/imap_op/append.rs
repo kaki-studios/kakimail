@@ -16,7 +16,7 @@ impl IMAPOp for Append {
         crate::imap::IMAPState,
         crate::imap::ResponseInfo,
     )> {
-        //FIX set flags and the parsed datetime in the final message
+        //TODO set flags and the parsed datetime in the final message
         let id = match state {
             IMAPState::Authed(id) => id,
             IMAPState::Selected(ref x) => x.user_id,
@@ -74,13 +74,11 @@ impl IMAPOp for Append {
 
         let mut datetime = None;
         if let Some(arg) = flags_raw {
-            // dbg!(arg);
             let _stripped = arg
                 .strip_prefix("(")
                 .context("should begin with (")?
                 .strip_suffix(")")
                 .context("should end with )")?;
-            // dbg!(stripped);
             //the flags SHOULD be set in the resulting message...
             //TODO
         }
@@ -90,13 +88,10 @@ impl IMAPOp for Append {
                 .map_err(|e| tracing::error!("{}", e))
                 .ok();
         }
-        // dbg!(arg);
 
-        // dbg!(&datetime);
         let mut recipients = vec![];
         let mut from = "".to_string();
         for line in mail_data.lines() {
-            // dbg!(&line);
             match line.split_once(": ") {
                 Some(("From", x)) => {
                     let start_index = x.find("<").map(|e| e + 1);

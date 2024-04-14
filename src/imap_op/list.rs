@@ -19,7 +19,7 @@ impl IMAPOp for List {
         let IMAPState::Authed(id) = state else {
             return Err(anyhow!("bad state"));
         };
-        //FIX this
+        //TODO fix this
         let mut mailboxes = db
             .lock()
             .await

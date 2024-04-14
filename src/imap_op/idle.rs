@@ -22,10 +22,12 @@ impl IMAPOp for Idle {
         };
         dbg!(&args);
         if args == "" {
-            Ok((vec![], state, ResponseInfo::RedoForNextMsg))
+            Ok((vec![b"+ idling\r\n".to_vec()], state, ResponseInfo::Idle))
         } else {
             Ok((
-                vec![format!("{} OK IDLE terminated", tag).as_bytes().to_vec()],
+                vec![format!("{} OK IDLE terminated\r\n", tag)
+                    .as_bytes()
+                    .to_vec()],
                 state,
                 ResponseInfo::Regular,
             ))

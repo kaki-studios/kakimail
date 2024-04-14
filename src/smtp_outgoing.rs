@@ -9,6 +9,7 @@ use anyhow::Context;
 use anyhow::Result;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
 
 pub struct SmtpOutgoing {
@@ -20,11 +21,15 @@ pub struct SmtpOutgoing {
 
 impl SmtpOutgoing {
     /// Creates a new server from a connected stream
-    pub async fn new(domain: impl AsRef<str>, stream: tokio::net::TcpStream) -> Result<Self> {
+    pub async fn new(
+        domain: impl AsRef<str>,
+        stream: tokio::net::TcpStream,
+        tx: Sender<String>,
+    ) -> Result<Self> {
         Ok(Self {
             stream,
             state_machine: SMTPStateMachine::new(domain, true),
-            db: Arc::new(Mutex::new(database::DBClient::new().await?)),
+            db: Arc::new(Mutex::new(database::DBClient::new(tx).await?)),
         })
     }
     pub async fn serve(mut self) -> Result<()> {
