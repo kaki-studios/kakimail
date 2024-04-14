@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::smtp_common::*;
+use crate::{smtp_common::*, tls::StreamType};
 use anyhow::*;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -10,10 +10,12 @@ use tokio::{
 use crate::database;
 
 pub struct SmtpIncoming {
-    pub stream: tokio::net::TcpStream,
+    // pub stream: tokio::net::TcpStream,
+    pub stream: StreamType,
     pub state_machine: SMTPStateMachine,
     pub db: Arc<Mutex<database::DBClient>>,
     pub domain: String,
+    pub acceptor: tokio_rustls::TlsAcceptor,
 }
 
 impl SmtpIncoming {
@@ -23,12 +25,21 @@ impl SmtpIncoming {
         stream: tokio::net::TcpStream,
         domain_stripped: String,
         tx: Sender<String>,
+        implicit_tls: bool,
+        acceptor: tokio_rustls::TlsAcceptor,
     ) -> Result<Self> {
+        let stream_type = if !implicit_tls {
+            StreamType::Plain(stream)
+        } else {
+            let tls_stream = acceptor.accept(stream).await?;
+            StreamType::Tls(tls_stream)
+        };
         Ok(Self {
-            stream,
+            stream: stream_type,
             state_machine: SMTPStateMachine::new(domain.clone(), false),
             db: Arc::new(Mutex::new(database::DBClient::new(tx).await?)),
             domain: domain_stripped,
+            acceptor,
         })
     }
 
@@ -50,6 +61,9 @@ impl SmtpIncoming {
             let response = self.state_machine.handle_smtp_incoming(msg)?;
             if response != SMTPStateMachine::HOLD_YOUR_HORSES {
                 self.stream.write_all(response).await?;
+                if response == SMTPStateMachine::READY_FOR_ENCRYPTION {
+                    self.stream = self.stream.upgrade_to_tls(self.acceptor.clone()).await?;
+                }
             } else {
                 tracing::debug!("Not responding, awaiting for more data");
             }

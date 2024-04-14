@@ -20,6 +20,7 @@ if len(sys.argv) < 3:
 
 server = smtplib.SMTP(sys.argv[1], port=int(sys.argv[2]))
 server.set_debuglevel(1)
+server.starttls()
 server.login(config["USERNAME"], config["PASSWORD"])
 server.noop()
 server.sendmail(from_addr, to_addr, msg)

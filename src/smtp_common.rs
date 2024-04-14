@@ -44,12 +44,14 @@ impl SMTPStateMachine {
     pub const AUTH_NOT_OK: &'static [u8] = b"535 Authentication error\r\n";
     pub const NOT_AUTHED_YET: &'static [u8] = b"530 Need authentication\r\n";
     pub const SEND_DATA_PLZ: &'static [u8] = b"354 End data with <CR><LF>.<CR><LF>\r\n";
+    pub const READY_FOR_ENCRYPTION: &'static [u8] = b"220 Ready to start TLS\r\n";
     pub const KTHXBYE: &'static [u8] = b"221 Bye\r\n";
     pub const HOLD_YOUR_HORSES: &'static [u8] = &[];
 
     pub fn new(domain: impl AsRef<str>, outgoing: bool) -> Self {
         let domain = domain.as_ref();
-        let ehlo_greeting = format!("250-{domain} Hello {domain}\r\n250 AUTH PLAIN LOGIN\r\n");
+        let ehlo_greeting =
+            format!("250-{domain} Hello {domain}\r\n250-AUTH PLAIN LOGIN\r\n250 STARTTLS\r\n");
         Self {
             state: SMTPState::Fresh,
             ehlo_greeting,
@@ -59,12 +61,12 @@ impl SMTPStateMachine {
 
     /// Handles a single SMTP command and returns a proper SMTP response
     pub fn handle_smtp_incoming(&mut self, raw_msg: &str) -> Result<&[u8]> {
-        tracing::trace!("Received {raw_msg} in state {:?}", self.state);
+        tracing::info!("Received {raw_msg} in state {:?}", self.state);
         let mut msg = raw_msg.split_whitespace();
         let command = msg.next().context("received empty command")?.to_lowercase();
         let state = self.state.clone();
         match (command.as_str(), state) {
-            ("ehlo", SMTPState::Fresh) => {
+            ("ehlo", _) => {
                 tracing::info!("Sending AUTH info");
                 self.state = SMTPState::Greeted;
                 Ok(self.ehlo_greeting.as_bytes())
@@ -73,6 +75,7 @@ impl SMTPStateMachine {
                 self.state = SMTPState::Greeted;
                 Ok(SMTPStateMachine::KK)
             }
+            ("starttls", _) => Ok(SMTPStateMachine::READY_FOR_ENCRYPTION),
             ("noop", _) | ("help", _) | ("info", _) | ("vrfy", _) | ("expn", _) => {
                 tracing::trace!("Got {command}");
                 Ok(SMTPStateMachine::KK)

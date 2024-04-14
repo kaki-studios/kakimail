@@ -15,8 +15,7 @@ impl IMAPOp for Idle {
         crate::imap::IMAPState,
         crate::imap::ResponseInfo,
     )> {
-        //TODO send update messages while waiting...
-        //and test this command
+        //TODO test this command
         let IMAPState::Authed(_id) = state else {
             return Err(anyhow!("bad state"));
         };

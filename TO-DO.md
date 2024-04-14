@@ -12,9 +12,7 @@
     - [ ] support for command arguments inside quotes, eg `A000 SUBSCRIBE "Personal/School Stuff"`
 - [ ] support for some SMTP extensions **MOST NOTABLY STARTTLS**
 - [ ] support for implicit tls ports
-- [ ] TLS with [tokio-rustls](https://crates.io/crates/tokio-rustls)
-    - [ ] use certs from porkbun (use their api to retrieve it)
-
-
+- [X] TLS with [tokio-rustls](https://crates.io/crates/tokio-rustls)
+    - [X] use certs from porkbun (use their api to retrieve it)
 
 other stuff?? add here!

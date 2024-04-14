@@ -4,6 +4,7 @@ use crate::database;
 use crate::smtp_common::Mail;
 use crate::smtp_common::SMTPState;
 use crate::smtp_common::SMTPStateMachine;
+use crate::tls::StreamType;
 use crate::utils;
 use anyhow::Context;
 use anyhow::Result;
@@ -13,26 +14,37 @@ use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
 
 pub struct SmtpOutgoing {
-    pub stream: tokio::net::TcpStream,
-    //should add message queue when using seriously
+    // pub stream: tokio::net::TcpStream,
+    pub stream: StreamType,
     pub state_machine: SMTPStateMachine,
     pub db: Arc<Mutex<database::DBClient>>,
+    pub acceptor: tokio_rustls::TlsAcceptor,
 }
 
 impl SmtpOutgoing {
     /// Creates a new server from a connected stream
     pub async fn new(
-        domain: impl AsRef<str>,
+        domain: String,
         stream: tokio::net::TcpStream,
         tx: Sender<String>,
+        implicit_tls: bool,
+        acceptor: tokio_rustls::TlsAcceptor,
     ) -> Result<Self> {
+        let stream_type = if !implicit_tls {
+            StreamType::Plain(stream)
+        } else {
+            let tls_stream = acceptor.accept(stream).await?;
+            StreamType::Tls(tls_stream)
+        };
         Ok(Self {
-            stream,
-            state_machine: SMTPStateMachine::new(domain, true),
+            stream: stream_type,
+            state_machine: SMTPStateMachine::new(domain.clone(), true),
             db: Arc::new(Mutex::new(database::DBClient::new(tx).await?)),
+            acceptor,
         })
     }
     pub async fn serve(mut self) -> Result<()> {
+        tracing::info!("greeting...");
         self.greet().await?;
         tracing::info!("greeted!");
         // let mut buf = vec![0; 65536];
@@ -55,6 +67,9 @@ impl SmtpOutgoing {
                 .await?;
             if response != SMTPStateMachine::HOLD_YOUR_HORSES {
                 self.stream.write_all(response).await?;
+                if response == SMTPStateMachine::READY_FOR_ENCRYPTION {
+                    self.stream = self.stream.upgrade_to_tls(self.acceptor.clone()).await?;
+                }
             } else {
                 tracing::debug!("Not responding, awaiting for more data");
             }

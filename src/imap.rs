@@ -63,15 +63,6 @@ impl IMAP {
     //eg: "* OK [CAPABILITY STARTTLS AUTH=SCRAM-SHA-256 LOGINDISABLED IMAP4rev2] IMAP4rev2 Service Ready"
     const GREETING: &'static [u8] = b"* OK IMAP4rev2 Service Ready\r\n";
     const _HOLD_YOUR_HORSES: &'static [u8] = &[];
-    // const FLAGS: &'static [u8] = b"* FLAGS (\\Answered \\Flagged \\Deleted \\Seen \\Draft)\r\n";
-    // const CAPABILITY: &'static [u8] = b"* CAPABILITY IMAP4rev2 STARTTLS IMAP4rev1 AUTH=PLAIN\r\n";
-    // const PERMANENT_FLAGS: &'static [u8] = b"* OK [PERMANENTFLAGS (\\Deleted \\Seen \\*)]\r\n";
-    ///shouldn't exist in the future
-    // const NAMESPACE: &'static [u8] = b"* NAMESPACE ((\"\" \"/\")) NIL NIL\r\n";
-    // const NO_PERMANENT_FLAGS: &'static [u8] =
-    // b"* OK [PERMANENTFLAGS ()] No permanent flags permitted\r\n";
-    //used for e.g. APPEND
-    // const DATETIME_FMT: &'static str = "%d-%b-%y %H:%M:%S %z";
 
     /// Creates a new server from a connected stream
     pub async fn new(
@@ -153,36 +144,32 @@ impl IMAP {
             ResponseInfo::Idle => {
                 let mut change_rx = changes.lock().await;
                 let mut buf = [0u8; 1024];
+                //idk why we have to import it, it complained otherwise
                 use core::result::Result::Ok;
                 tokio::select! {
                     result = tokio::time::timeout(Duration::from_secs(30 * 60), stream.read(&mut buf)) => {
-
                         match result {
-
                             Ok(Ok(bytes_read)) =>{
-                                    if bytes_read == 0 {
-                                        return Err(anyhow!("read 0 bytes!"))
-                                    }
+                                if bytes_read == 0 {
+                                    return Err(anyhow!("read 0 bytes!"))
+                                }
                                 if &buf[..bytes_read] == b"DONE\r\n" {
                                     stream.write_all(format!("{} OK IDLE terminated\r\n", tag).as_bytes()).await?;
-                                    }
+                                }
                             },
                             Ok(Err(err)) => {
                                 tracing::error!("imap error: {}", err);
                             },
                             Err(_) => {
-                                stream.write_all(b"*BYE IDLE timed out\r\n").await?;
+                                stream.write_all(b"* BYE IDLE timed out\r\n").await?;
                             }
                         }
                     }
-
                     change = change_rx.recv() => {
                         if let Some(change_str) = change {
-                            dbg!(&change_str);
-
-
+                            tracing::info!("changes: {}" ,change_str);
+                            stream.write_all(change_str.as_bytes()).await?;
                         }
-
                     }
                 }
             }
