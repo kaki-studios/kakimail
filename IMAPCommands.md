@@ -21,7 +21,7 @@
 - [X] namespace
 - [X] status
 - [X] append
-- [ ] idle
+- [X] idle (imaplib only works for IMAP4rev1, so i can test IDLE)
 ### selected state:
 - [X] close
 - [X] unselect

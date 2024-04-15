@@ -9,10 +9,13 @@
 - [ ] IMAP
     - [X] split `imap.rs` into multiple files
     - [x] support for multiple mailboxes and namespacing (see next example)
-    - [ ] support for command arguments inside quotes, eg `A000 SUBSCRIBE "Personal/School Stuff"`
-- [ ] support for some SMTP extensions **MOST NOTABLY STARTTLS**
+    - [X] support for command arguments inside quotes, eg `A000 SUBSCRIBE "Personal/School Stuff"` (did it dirtily)
+    - [ ] all commands
+- [X] support for some SMTP extensions **MOST NOTABLY STARTTLS**
 - [ ] support for implicit tls ports
 - [X] TLS with [tokio-rustls](https://crates.io/crates/tokio-rustls)
     - [X] use certs from porkbun (use their api to retrieve it)
+- [ ] dmarc, dkim and spf or whatever
+- [ ] parsing with nom or logos (for better parsing)
 
 other stuff?? add here!

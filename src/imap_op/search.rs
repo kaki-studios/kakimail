@@ -8,6 +8,7 @@ use anyhow::Result;
 use tokio::sync::Mutex;
 
 use crate::database::IMAPFlags;
+use crate::imap::IMAPState;
 use crate::imap::ResponseInfo;
 use crate::{
     database::DBClient,
@@ -38,19 +39,28 @@ pub(super) async fn search_or_uid(
     db: Arc<Mutex<DBClient>>,
     uid: bool,
 ) -> Result<(imap::Response, imap::IMAPState, imap::ResponseInfo)> {
-    let mut ret: Vec<ReturnOptions> = vec![];
+    let IMAPState::Selected(selected_state) = state else {
+        return Err(anyhow!("bad state"));
+    };
 
-    let mut charset: Option<&str> = None;
+    let mut ret: Vec<ReturnOptions> = vec![];
+    //used later
+    let msg_count = db
+        .lock()
+        .await
+        .mail_count(Some(selected_state.mailbox_id))
+        .await?;
+
     let mut msg = args.split_whitespace();
     while let Some(arg) = msg.next() {
         if arg.starts_with("{") {
             //check the rfc if you don't know what this is for.
             //basically dirty parsing
+            //probably should be used!!
             continue;
         }
         if arg.to_lowercase() == "charset" {
-            charset = msg.next();
-            if let Some(set) = charset {
+            if let Some(set) = msg.next() {
                 if set.to_lowercase() != "utf-8" {
                     return Ok((
                         vec![format!("{} BAD unsupported charset", tag)
@@ -88,30 +98,12 @@ pub(super) async fn search_or_uid(
             }
             continue;
         }
-        let search_arg = match arg.to_lowercase().as_str() {
-            "all" => SearchArgs::All,
-            "answered" => SearchArgs::Answered,
-            "bcc" => {
-                //TODO this won't work if the search command spans over many requests
-                //e.g. `
-                // C: A285 SEARCH CHARSET UTF-8 TEXT {12}
-                // S: + Ready for literal text
-                // C: отпуск
-                //`
-                let rest = msg
-                    .clone()
-                    .take_while(|x| !x.ends_with("\""))
-                    .map(|x| x.chars().filter(|c| c != &'"').collect::<String>())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-
-                SearchArgs::Bcc(rest)
-            }
-            _ => continue,
-        };
     }
+    let arg_vec = crate::utils::parse_search_args(msg, msg_count)?;
 
     dbg!(ret);
+    dbg!(arg_vec);
+
     Err(anyhow!("not implemented"))
 }
 
@@ -140,8 +132,9 @@ impl FromStr for ReturnOptions {
 
 //TODO use dates
 ///one hell of an enum!
-enum SearchArgs {
-    SequenceSet(String),
+#[derive(Debug, Clone)]
+pub enum SearchArgs {
+    SequenceSet(Vec<i64>),
     All,
     Answered,
     Bcc(String),
@@ -153,8 +146,8 @@ enum SearchArgs {
     From(String),
     Header(String, String),
     Keyword(IMAPFlags),
-    Larger(i32),
-    Not(String),
+    Larger(i64),
+    Not(Box<SearchArgs>),
     On(String),
     Or(String, String),
     Seen,
@@ -162,7 +155,7 @@ enum SearchArgs {
     SentOn(String),
     SentSince(String),
     Since(String),
-    Smaller(i32),
+    Smaller(i64),
     Subject(String),
     Text(String),
     To(String),

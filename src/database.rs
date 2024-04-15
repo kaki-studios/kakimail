@@ -1,4 +1,4 @@
-use std::char;
+use std::{char, str::FromStr};
 
 use crate::smtp_common::Mail;
 use anyhow::{anyhow, Context, Result};
@@ -404,10 +404,25 @@ impl DBClient {
 
 //NOTE rethink this
 #[repr(u8)]
+#[derive(Debug, Clone)]
 pub enum IMAPFlags {
     Answered = 0,
     Flagged = 1,
     Deleted = 2,
     Seen = 3,
     Draft = 4,
+}
+
+impl FromStr for IMAPFlags {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
+        match s {
+            "\"\\Answered\"" => Ok(IMAPFlags::Answered),
+            "\"\\Flagged\"" => Ok(IMAPFlags::Flagged),
+            "\"\\Deleted\"" => Ok(IMAPFlags::Deleted),
+            "\"\\Seen\"" => Ok(IMAPFlags::Seen),
+            "\"\\Draft\"" => Ok(IMAPFlags::Draft),
+            x => Err(anyhow!("invalid flag: {}", x)),
+        }
+    }
 }
