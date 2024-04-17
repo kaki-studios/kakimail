@@ -4,13 +4,17 @@ A simple and portable SMTP server, written in pure Rust (🚀🚀🚀). Anyone c
 
 ## Features:
 
-- SMTP state machine that handles incoming requests (as per [edgemail](https://github.com/psarna/edgemail/tree/master))
-- Ability to send messages (unlike edgemail)
+- Incoming email receiving
+- Outgoing message sending
+- Support for most IMAP4rev2 commands (rfc 9051)
+- encryption on SMTP and IMAP (using STARTTLS) 
+
 
 ## TO-DO:
 - [ ] Support for all IMAP4rev2 commands
-- [ ] encryption on both smtp and imap with rustls
 
 
 ## insipiration
-[edgemail](https://github.com/psarna/edgemail)
+- [edgemail](https://github.com/psarna/edgemail)
+- [stalwartlabs email server](https://github.com/stalwartlabs/mail-server)
+

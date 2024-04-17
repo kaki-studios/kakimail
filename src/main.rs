@@ -10,6 +10,7 @@ use tokio_rustls::TlsAcceptor;
 mod database;
 mod imap;
 mod imap_op;
+mod parsing;
 mod smtp_common;
 mod smtp_incoming;
 mod smtp_outgoing;

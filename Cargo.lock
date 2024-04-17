@@ -1154,6 +1154,7 @@ dependencies = [
  "dotenv",
  "hickory-resolver",
  "libsql-client",
+ "nom",
  "reqwest 0.12.2",
  "rustls-pemfile 2.1.1",
  "tokio",
