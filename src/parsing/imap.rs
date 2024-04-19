@@ -1,48 +1,62 @@
-use std::str::from_utf8;
-
 use nom::{
-    bytes::complete::{tag, take},
-    character::complete::digit1,
-    sequence::tuple,
+    bytes::complete::{escaped, take, take_while},
+    character::complete::{alphanumeric0, char, digit1},
+    sequence::{delimited, tuple},
     IResult,
 };
 
-//TODO this code is copied from: https://github.com/djc/tokio-imap/blob/main/imap-proto/src/parser/core.rs
-//fix it:
-//- use &str, not &[u8]
-//- better, more simple parsing
-//- learn nom
+//NOTE this code is copied from: https://github.com/djc/tokio-imap/blob/main/imap-proto/src/parser/core.rs
 
-pub fn literal(input: &[u8]) -> IResult<&[u8], &[u8]> {
-    let mut parser = tuple((tag(b"{"), number, tag(b"}"), tag("\r\n")));
+pub fn literal(input: &str) -> IResult<&str, &str> {
+    //TODO change the functionality
+    let mut parser = tuple((char('{'), number, char('}')));
 
-    let (remaining, (_, count, _, _)) = parser(input)?;
+    let (remaining, (_, count, _)) = parser(input)?;
 
     let (remaining, data) = take(count)(remaining)?;
-    //huh?? this will consume the data iterator, making it empty on return??
-    if !data.iter().all(|byte| is_char8(*byte)) {
-        return Err(nom::Err::Error(nom::error::Error::new(
-            remaining,
-            nom::error::ErrorKind::Char,
-        )));
-    }
 
     Ok((remaining, data))
 }
-pub fn is_char8(i: u8) -> bool {
-    i != 0
-}
 
-pub fn number(i: &[u8]) -> IResult<&[u8], u32> {
-    let (i, bytes) = digit1(i)?;
-    match from_utf8(bytes)
-        .ok()
-        .and_then(|s| u32::from_str_radix(s, 10).ok())
-    {
+pub fn number(i: &str) -> IResult<&str, u32> {
+    let (i, num) = digit1(i)?;
+    match u32::from_str_radix(num, 10).ok() {
         Some(v) => Ok((i, v)),
         None => Err(nom::Err::Error(nom::error::make_error(
             i,
             nom::error::ErrorKind::MapRes,
         ))),
+    }
+}
+
+///removes the quotes
+///RFC 9051:
+/// quoted          = DQUOTE *QUOTED-CHAR DQUOTE
+/// QUOTED-CHAR     = <any TEXT-CHAR except quoted-specials> /
+///                   "\" quoted-specials / UTF8-2 / UTF8-3 / UTF8-4
+/// quoted-specials = DQUOTE / "\"
+pub fn quoted(input: &str) -> IResult<&str, &str> {
+    let parse = take_while(|s| s != '"' && s != '\\');
+    delimited(char('"'), parse, char('"'))(input)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::parsing::imap::{literal, number, quoted};
+
+    #[test]
+    fn test_literal() {
+        assert_eq!(literal("{2}ok"), Ok(("", "ok")))
+    }
+    #[test]
+    fn test_number() {
+        assert_eq!(number("23nme"), Ok(("nme", 23)))
+    }
+    #[test]
+    fn test_quoted() {
+        assert_eq!(
+            quoted("\"test, 这不是ASCII\""),
+            Ok(("", "test, 这不是ASCII"))
+        )
     }
 }
