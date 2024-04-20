@@ -1,21 +1,15 @@
 use nom::{
-    bytes::complete::{escaped, take, take_while},
-    character::complete::{alphanumeric0, char, digit1},
-    sequence::{delimited, tuple},
+    branch::alt,
+    bytes::complete::{tag, take_while},
+    character::complete::{char, digit1},
+    sequence::delimited,
     IResult,
 };
 
 //NOTE this code is copied from: https://github.com/djc/tokio-imap/blob/main/imap-proto/src/parser/core.rs
 
-pub fn literal(input: &str) -> IResult<&str, &str> {
-    //TODO change the functionality
-    let mut parser = tuple((char('{'), number, char('}')));
-
-    let (remaining, (_, count, _)) = parser(input)?;
-
-    let (remaining, data) = take(count)(remaining)?;
-
-    Ok((remaining, data))
+pub fn literal(input: &str) -> IResult<&str, u32> {
+    delimited(char('{'), number, alt((tag("}"), tag("+}"))))(input)
 }
 
 pub fn number(i: &str) -> IResult<&str, u32> {
@@ -29,6 +23,7 @@ pub fn number(i: &str) -> IResult<&str, u32> {
     }
 }
 
+//TODO quoted-specials should be able to be escaped
 ///removes the quotes
 ///RFC 9051:
 /// quoted          = DQUOTE *QUOTED-CHAR DQUOTE
@@ -40,13 +35,37 @@ pub fn quoted(input: &str) -> IResult<&str, &str> {
     delimited(char('"'), parse, char('"'))(input)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum Mailbox {
+    Inbox,
+    Custom(String),
+}
+impl From<&str> for Mailbox {
+    fn from(s: &str) -> Self {
+        if s.to_lowercase() == "inbox" {
+            Mailbox::Inbox
+        } else {
+            Mailbox::Custom(s.to_string())
+        }
+    }
+}
+
+/// mailbox = "INBOX" / astring
+///
+/// INBOX is case-insensitive. All case variants of INBOX (e.g., "iNbOx")
+/// MUST be interpreted as INBOX not as an astring.
+pub fn mailbox(input: &str) -> IResult<&str, Mailbox> {
+    nom::combinator::map(quoted, Mailbox::from)(input)
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::parsing::imap::{literal, number, quoted};
+    use crate::parsing::imap::{literal, mailbox, number, quoted, Mailbox};
 
     #[test]
     fn test_literal() {
-        assert_eq!(literal("{2}ok"), Ok(("", "ok")))
+        assert_eq!(literal("{2}ok"), Ok(("ok", 2)));
+        assert_eq!(literal("{2+}ok"), Ok(("ok", 2)))
     }
     #[test]
     fn test_number() {
@@ -57,6 +76,14 @@ mod tests {
         assert_eq!(
             quoted("\"test, 这不是ASCII\""),
             Ok(("", "test, 这不是ASCII"))
+        )
+    }
+    #[test]
+    fn test_mailbox() {
+        assert_eq!(mailbox("\"iNbOx\""), Ok(("", Mailbox::Inbox)));
+        assert_eq!(
+            mailbox("\"not\""),
+            Ok(("", Mailbox::Custom("not".to_string())))
         )
     }
 }
