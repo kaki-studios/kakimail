@@ -3,7 +3,7 @@ use std::{mem, str::FromStr};
 use anyhow::{anyhow, Context, Result};
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
 
-use crate::{database::IMAPFlags, imap_op::search::SearchArgs};
+use crate::{database::IMAPFlags, imap_op::search::SearchKeys};
 
 pub const DECODER: base64::engine::GeneralPurpose = base64::engine::GeneralPurpose::new(
     &base64::alphabet::STANDARD,
@@ -68,12 +68,12 @@ pub fn seperate_login(input: Vec<u8>) -> Result<(String, String)> {
 pub fn parse_search_args<'a>(
     mut msg: impl Iterator<Item = &'a str> + Clone,
     msg_count: i64,
-) -> Result<Vec<SearchArgs>> {
+) -> Result<Vec<SearchKeys>> {
     let mut arg_vec = vec![];
     while let Some(arg) = msg.next() {
         let search_arg = match arg.to_lowercase().as_str() {
-            "all" => SearchArgs::All,
-            "answered" => SearchArgs::Answered,
+            "all" => SearchKeys::All,
+            "answered" => SearchKeys::Answered,
             "bcc" => {
                 //TODO this won't work if the search command spans over many requests
                 //e.g. `
@@ -89,7 +89,7 @@ pub fn parse_search_args<'a>(
                     .join(" ");
                 dbg!(&rest);
 
-                SearchArgs::Bcc(rest)
+                SearchKeys::Bcc(rest)
             }
             x if x.contains(",") => {
                 let mut sequence_set = vec![];
@@ -114,7 +114,7 @@ pub fn parse_search_args<'a>(
                     }
                 }
 
-                SearchArgs::SequenceSet(sequence_set)
+                SearchKeys::SequenceSet(sequence_set)
             }
             "body" => {
                 //dirty, check bcc for idea for improvement
@@ -124,7 +124,7 @@ pub fn parse_search_args<'a>(
                     .map(|x| x.chars().filter(|c| c != &'"').collect::<String>())
                     .collect::<Vec<_>>()
                     .join(" ");
-                SearchArgs::Body(search_term)
+                SearchKeys::Body(search_term)
             }
             "cc" => {
                 //dirty, check bcc for idea for improvement
@@ -134,12 +134,12 @@ pub fn parse_search_args<'a>(
                     .map(|x| x.chars().filter(|c| c != &'"').collect::<String>())
                     .collect::<Vec<_>>()
                     .join(" ");
-                SearchArgs::Cc(search_term)
+                SearchKeys::Cc(search_term)
             }
 
-            "deleted" => SearchArgs::Deleted,
-            "draft" => SearchArgs::Draft,
-            "flagged" => SearchArgs::Flagged,
+            "deleted" => SearchKeys::Deleted,
+            "draft" => SearchKeys::Draft,
+            "flagged" => SearchKeys::Flagged,
             "from" => {
                 let search_term = msg
                     .clone()
@@ -147,7 +147,7 @@ pub fn parse_search_args<'a>(
                     .map(|x| x.chars().filter(|c| c != &'"').collect::<String>())
                     .collect::<Vec<_>>()
                     .join(" ");
-                SearchArgs::From(search_term)
+                SearchKeys::From(search_term)
             }
             "header" => {
                 let field_name = msg.next().context("should provide field name")?;
@@ -157,17 +157,17 @@ pub fn parse_search_args<'a>(
                     .map(|x| x.chars().filter(|c| c != &'"').collect::<String>())
                     .collect::<Vec<_>>()
                     .join(" ");
-                SearchArgs::Header(field_name.to_owned(), rest)
+                SearchKeys::Header(field_name.to_owned(), rest)
             }
             "keyword" => {
                 let string = msg.next().context("should provide flag")?;
                 let flag = IMAPFlags::from_str(string)?;
-                SearchArgs::Keyword(flag)
+                SearchKeys::Keyword(flag)
             }
             "larger" => {
                 let n_str = msg.next().context("should prodide size")?;
                 let n = n_str.parse::<i64>()?;
-                SearchArgs::Larger(n)
+                SearchKeys::Larger(n)
             }
             "not" => {
                 //hope it doesn't recurse infinitely
@@ -176,8 +176,8 @@ pub fn parse_search_args<'a>(
                     return Err(anyhow!("no search args found"));
                 }
                 //fighting the borrow checker, still a pretty ok solution
-                let boxed = Box::new(mem::replace(&mut vec[0], SearchArgs::All));
-                SearchArgs::Not(boxed)
+                let boxed = Box::new(mem::replace(&mut vec[0], SearchKeys::All));
+                SearchKeys::Not(boxed)
             }
             "on" => {
                 //TODO parse the date, format:

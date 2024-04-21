@@ -1,10 +1,16 @@
+//only temoporary
+#![allow(unused)]
+
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_while},
-    character::complete::{char, digit1},
-    sequence::delimited,
+    character::complete::{alpha1, char, digit1, multispace1},
+    multi::{separated_list0, separated_list1},
+    sequence::{delimited, tuple},
     IResult,
 };
+
+use crate::imap_op::search::{ReturnOptions, SearchKeys};
 
 //NOTE this code is copied from: https://github.com/djc/tokio-imap/blob/main/imap-proto/src/parser/core.rs
 
@@ -23,6 +29,54 @@ pub fn number(i: &str) -> IResult<&str, u32> {
     }
 }
 
+///parses the search command
+///assumes "SEARCH" is already stripped from the start
+pub fn search(input: &str) -> IResult<&str, SearchArgs> {
+    dbg!(&input);
+    let return_opts_parser = separated_list1(tag(" "), alpha1::<&str, nom::error::Error<&str>>);
+    let mut start_parser = delimited(tag("RETURN ("), return_opts_parser, tag(") "));
+
+    let (args, return_opts) = match start_parser(input).ok() {
+        Some((rest, opts)) => (rest, Some(opts)),
+        None => (input, None),
+    };
+    println!("{:?}, {:?}", args, return_opts);
+    //TODO support quotes
+    let mut args_parser = separated_list1(multispace1::<&str, nom::error::Error<&str>>, alpha1);
+    let (_, mut parsed_args) = args_parser(args)?;
+    let mut iterator = parsed_args.iter();
+    let mut new_args = vec![];
+    while let Some(&arg) = iterator.next() {
+        //TODO support other args than just bcc
+        if arg.to_lowercase() == "bcc" {
+            let mut new_arg = arg.to_string();
+            if let Some(&next) = iterator.next() {
+                //clunky
+                new_arg.extend(" ".chars());
+                new_arg.extend(next.chars())
+            }
+            new_args.push(new_arg);
+            continue;
+        }
+        new_args.push(arg.to_string())
+    }
+    println!("{:?}, {:?}", parsed_args, new_args);
+    Ok(("", SearchArgs::new()))
+}
+
+pub struct SearchArgs {
+    return_opts: Vec<ReturnOptions>,
+    search_keys: Vec<SearchKeys>,
+}
+
+impl SearchArgs {
+    pub fn new() -> Self {
+        SearchArgs {
+            return_opts: vec![],
+            search_keys: vec![],
+        }
+    }
+}
 //TODO quoted-specials should be able to be escaped
 ///removes the quotes
 ///RFC 9051:
@@ -62,6 +116,8 @@ pub fn mailbox(input: &str) -> IResult<&str, Mailbox> {
 mod tests {
     use crate::parsing::imap::{literal, mailbox, number, quoted, Mailbox};
 
+    use super::search;
+
     #[test]
     fn test_literal() {
         assert_eq!(literal("{2}ok"), Ok(("ok", 2)));
@@ -85,5 +141,9 @@ mod tests {
             mailbox("\"not\""),
             Ok(("", Mailbox::Custom("not".to_string())))
         )
+    }
+    #[test]
+    fn test_search() {
+        search("RETURN (MIN) UNSEEN BCC test").ok();
     }
 }

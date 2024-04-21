@@ -108,7 +108,7 @@ pub(super) async fn search_or_uid(
 }
 
 #[derive(Debug)]
-enum ReturnOptions {
+pub enum ReturnOptions {
     Min,
     Max,
     All,
@@ -133,7 +133,7 @@ impl FromStr for ReturnOptions {
 //TODO use dates
 ///one hell of an enum!
 #[derive(Debug, Clone)]
-pub enum SearchArgs {
+pub enum SearchKeys {
     SequenceSet(Vec<i64>),
     All,
     Answered,
@@ -147,7 +147,7 @@ pub enum SearchArgs {
     Header(String, String),
     Keyword(IMAPFlags),
     Larger(i64),
-    Not(Box<SearchArgs>),
+    Not(Box<SearchKeys>),
     On(String),
     Or(String, String),
     Seen,
