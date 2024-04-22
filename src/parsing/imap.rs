@@ -51,6 +51,7 @@ pub fn search(input: &str) -> IResult<&str, SearchArgs> {
         if arg.to_lowercase() == "bcc" {
             let mut new_arg = arg.to_string();
             if let Some(&next) = iterator.next() {
+                let next = string(next);
                 //clunky
                 new_arg.extend(" ".chars());
                 new_arg.extend(next.chars())
@@ -60,7 +61,7 @@ pub fn search(input: &str) -> IResult<&str, SearchArgs> {
         }
         new_args.push(arg.to_string())
     }
-    println!("{:?}, {:?}", parsed_args, new_args);
+    // println!("{:?}, {:?}", parsed_args, new_args);
     Ok(("", SearchArgs::new()))
 }
 
@@ -87,6 +88,14 @@ impl SearchArgs {
 pub fn quoted(input: &str) -> IResult<&str, &str> {
     let parse = take_while(|s| s != '"' && s != '\\');
     delimited(char('"'), parse, char('"'))(input)
+}
+
+/// string          = quoted / literal
+pub fn string(input: &str) -> &str {
+    match quoted(input).ok() {
+        Some((_, result)) => result,
+        None => input,
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
