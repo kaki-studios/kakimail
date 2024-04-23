@@ -3,7 +3,7 @@
 
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_while},
+    bytes::complete::{tag, take_until, take_while},
     character::complete::{alpha1, char, digit1, multispace1},
     multi::{separated_list0, separated_list1},
     sequence::{delimited, tuple},
@@ -29,6 +29,32 @@ pub fn number(i: &str) -> IResult<&str, u32> {
     }
 }
 
+//`HELLO WORLD "QUOTED ELEMENT"` -> ["HELLO", "WORLD", "QUOTED ELEMENT"]
+pub fn parse_list(list: &str) -> Result<Vec<String>, nom::Err<nom::error::Error<&str>>> {
+    let mut iterator = list.split_whitespace();
+    let mut new_vec = Vec::new();
+    while let Some(elem) = iterator.next() {
+        if elem.starts_with('"') {
+            let (stripped, _) = char('"')(elem)?;
+            let mut start = stripped.to_string();
+            while let Some(string) = iterator.next() {
+                if string.ends_with('"') {
+                    let (_, s) = take_until("\"")(string)?;
+                    //clunky
+                    start.extend(" ".chars());
+                    start.extend(s.chars());
+                    break;
+                }
+                start.extend(string.chars());
+            }
+            new_vec.push(start)
+        } else {
+            new_vec.push(elem.to_string())
+        }
+    }
+    Ok(new_vec)
+}
+
 ///parses the search command
 ///assumes "SEARCH" is already stripped from the start
 pub fn search(input: &str) -> IResult<&str, SearchArgs> {
@@ -42,24 +68,30 @@ pub fn search(input: &str) -> IResult<&str, SearchArgs> {
     };
     println!("{:?}, {:?}", args, return_opts);
     //TODO support quotes
-    let mut args_parser = separated_list1(multispace1::<&str, nom::error::Error<&str>>, alpha1);
-    let (_, mut parsed_args) = args_parser(args)?;
+    let parsed_args = parse_list(args)?;
     let mut iterator = parsed_args.iter();
     let mut new_args = vec![];
-    while let Some(&arg) = iterator.next() {
-        //TODO support other args than just bcc
-        if arg.to_lowercase() == "bcc" {
-            let mut new_arg = arg.to_string();
-            if let Some(&next) = iterator.next() {
-                let next = string(next);
-                //clunky
-                new_arg.extend(" ".chars());
-                new_arg.extend(next.chars())
+    while let Some(arg) = iterator.next() {
+        //TODO support other args
+        match arg.to_lowercase().as_str() {
+            "all" => new_args.push(arg.to_string()),
+            "answered" => new_args.push(arg.to_string()),
+            "bcc" => {
+                //find a way to do this without cloning
+                if let Some(x) = iterator.next() {
+                    new_args.push([arg.clone(), x.clone()].join(" "))
+                }
             }
-            new_args.push(new_arg);
-            continue;
+            "before" => {
+                if let Some(x) = iterator.next() {
+                    new_args.push([arg.clone(), x.clone()].join(" "))
+                }
+            }
+            _ => {
+                //could be sequence set
+                new_args.push(arg.to_string())
+            }
         }
-        new_args.push(arg.to_string())
     }
     // println!("{:?}, {:?}", parsed_args, new_args);
     Ok(("", SearchArgs::new()))
@@ -123,7 +155,7 @@ pub fn mailbox(input: &str) -> IResult<&str, Mailbox> {
 
 #[cfg(test)]
 mod tests {
-    use crate::parsing::imap::{literal, mailbox, number, quoted, Mailbox};
+    use crate::parsing::imap::{literal, mailbox, number, parse_list, quoted, Mailbox};
 
     use super::search;
 
@@ -154,5 +186,16 @@ mod tests {
     #[test]
     fn test_search() {
         search("RETURN (MIN) UNSEEN BCC test").ok();
+    }
+    #[test]
+    fn test_list() {
+        let result: Vec<String> = vec!["HELLO", "WORLD", "QUOTED ELEMENT"]
+            .iter()
+            .map(|e| e.to_string())
+            .collect();
+        assert_eq!(
+            result,
+            parse_list("HELLO WORLD \"QUOTED ELEMENT\"").unwrap()
+        )
     }
 }
