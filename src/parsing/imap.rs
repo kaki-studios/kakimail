@@ -1,6 +1,8 @@
 //only temoporary
 #![allow(unused)]
 
+use std::str::FromStr;
+
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_until, take_while},
@@ -103,7 +105,13 @@ pub fn search(input: &str) -> Result<SearchArgs, nom::Err<nom::error::Error<&str
             }
         }
     }
-    println!("{:?}, {:?}", parsed_args, new_args);
+    let searchkeys: Vec<SearchKeys> = new_args
+        .iter()
+        .map(|x| SearchKeys::from_str(x))
+        .flatten()
+        .collect();
+
+    println!("{:?}, {:?}, {:?}", parsed_args, new_args, searchkeys);
     Ok(SearchArgs::new())
 }
 

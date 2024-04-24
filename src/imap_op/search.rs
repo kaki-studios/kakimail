@@ -138,6 +138,7 @@ pub enum SearchKeys {
     All,
     Answered,
     Bcc(String),
+    Before(String),
     Body(String),
     Cc(String),
     Deleted,
@@ -166,4 +167,58 @@ pub enum SearchKeys {
     Unflagged,
     Unkeyword(IMAPFlags),
     Unseen,
+}
+
+impl FromStr for SearchKeys {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
+        let (start, end) = s.split_once(" ").unwrap_or((s, ""));
+        let end = end.to_string();
+        let result = match start.to_lowercase().as_str() {
+            "all" => SearchKeys::All,
+            "answered" => SearchKeys::Answered,
+            "bcc" => SearchKeys::Bcc(end),
+            "before" => SearchKeys::Before(end),
+            "body" => SearchKeys::Body(end),
+            "cc" => SearchKeys::Cc(end),
+            "deleted" => SearchKeys::Deleted,
+            "draft" => SearchKeys::Draft,
+            "flagged" => SearchKeys::Flagged,
+            "from" => SearchKeys::From(end),
+            "header" => {
+                let (fieldname, rest) = end
+                    .split_once(" ")
+                    .ok_or(anyhow!("couldn't parse HEADER"))?;
+                SearchKeys::Header(fieldname.to_string(), rest.to_string())
+            }
+            "keyword" => SearchKeys::Keyword(IMAPFlags::from_str(&end)?),
+            "larger" => SearchKeys::Larger(i64::from_str(&end)?),
+            "not" => SearchKeys::Keyword(IMAPFlags::from_str(&end)?),
+            "on" => SearchKeys::On(end),
+            "or" => {
+                //let's hope it works
+                let (key1, key2) = end.split_once(" ").ok_or(anyhow!("couldn't parse OR"))?;
+                SearchKeys::Or(key1.to_string(), key2.to_string())
+            }
+            "seen" => SearchKeys::Seen,
+            "sentbefore" => SearchKeys::SentBefore(end),
+            "senton" => SearchKeys::SentOn(end),
+            "sentsince" => SearchKeys::SentSince(end),
+            "since" => SearchKeys::Since(end),
+            "smaller" => SearchKeys::Smaller(i64::from_str(&end)?),
+            "subject" => SearchKeys::Subject(end),
+            "text" => SearchKeys::Text(end),
+            "to" => SearchKeys::To(end),
+            "uid" => SearchKeys::Uid(end),
+            "unanswered" => SearchKeys::Unanswered,
+            "undeleted" => SearchKeys::Undeleted,
+            "undraft" => SearchKeys::Undraft,
+            "unflagged" => SearchKeys::Unflagged,
+            "unkeyword" => SearchKeys::Unkeyword(IMAPFlags::from_str(&end)?),
+            "unseen" => SearchKeys::Unseen,
+
+            _ => return Err(anyhow!("not implemented")),
+        };
+        Ok(result)
+    }
 }
