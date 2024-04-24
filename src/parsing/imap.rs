@@ -12,7 +12,7 @@ use nom::{
 
 use crate::imap_op::search::{ReturnOptions, SearchKeys};
 
-//NOTE this code is copied from: https://github.com/djc/tokio-imap/blob/main/imap-proto/src/parser/core.rs
+//NOTE this code has taken inspiration from: https://github.com/djc/tokio-imap/blob/main/imap-proto/src/parser/core.rs
 
 pub fn literal(input: &str) -> IResult<&str, u32> {
     delimited(char('{'), number, alt((tag("}"), tag("+}"))))(input)
@@ -39,7 +39,10 @@ pub fn parse_list(list: &str) -> Result<Vec<String>, nom::Err<nom::error::Error<
             let mut start = stripped.to_string();
             while let Some(string) = iterator.next() {
                 if string.ends_with('"') {
-                    let (_, s) = take_until("\"")(string)?;
+                    // let (_, s) = take_until("\"")(string)?;
+                    let s = string.strip_suffix("\"").ok_or(nom::Err::Error(
+                        nom::error::Error::new(string, nom::error::ErrorKind::Fail),
+                    ))?;
                     //clunky
                     start.extend(" ".chars());
                     start.extend(s.chars());
@@ -57,8 +60,9 @@ pub fn parse_list(list: &str) -> Result<Vec<String>, nom::Err<nom::error::Error<
 
 ///parses the search command
 ///assumes "SEARCH" is already stripped from the start
-pub fn search(input: &str) -> IResult<&str, SearchArgs> {
+pub fn search(input: &str) -> Result<SearchArgs, nom::Err<nom::error::Error<&str>>> {
     dbg!(&input);
+    //use alt() instead
     let return_opts_parser = separated_list1(tag(" "), alpha1::<&str, nom::error::Error<&str>>);
     let mut start_parser = delimited(tag("RETURN ("), return_opts_parser, tag(") "));
 
@@ -74,17 +78,23 @@ pub fn search(input: &str) -> IResult<&str, SearchArgs> {
     while let Some(arg) = iterator.next() {
         //TODO support other args
         match arg.to_lowercase().as_str() {
-            "all" => new_args.push(arg.to_string()),
-            "answered" => new_args.push(arg.to_string()),
-            "bcc" => {
+            "all" | "answered" | "deleted" | "draft" | "flagged" | "seen" | "unanswered"
+            | "undeleted" | "undraft" | "unflagged" | "unseen" => new_args.push(arg.to_string()),
+
+            "bcc" | "before" | "body" | "cc" | "from" | "keyword" | "larger" | "not" | "on"
+            | "sentbefore" | "senton" | "sentsince" | "since" | "smaller" | "subject" | "text"
+            | "to" | "uid" | "unkeyword" => {
                 //find a way to do this without cloning
                 if let Some(x) = iterator.next() {
                     new_args.push([arg.clone(), x.clone()].join(" "))
                 }
             }
-            "before" => {
+            "header" | "or" => {
+                //two strings
                 if let Some(x) = iterator.next() {
-                    new_args.push([arg.clone(), x.clone()].join(" "))
+                    if let Some(y) = iterator.next() {
+                        new_args.push([arg.clone(), x.clone(), y.clone()].join(" "))
+                    }
                 }
             }
             _ => {
@@ -93,8 +103,8 @@ pub fn search(input: &str) -> IResult<&str, SearchArgs> {
             }
         }
     }
-    // println!("{:?}, {:?}", parsed_args, new_args);
-    Ok(("", SearchArgs::new()))
+    println!("{:?}, {:?}", parsed_args, new_args);
+    Ok(SearchArgs::new())
 }
 
 pub struct SearchArgs {
@@ -185,7 +195,7 @@ mod tests {
     }
     #[test]
     fn test_search() {
-        search("RETURN (MIN) UNSEEN BCC test").ok();
+        search("RETURN (MIN) UNSEEN BCC test TEXT \"some text\"").ok();
     }
     #[test]
     fn test_list() {
