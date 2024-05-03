@@ -10,6 +10,7 @@ use tokio::sync::Mutex;
 use crate::database::IMAPFlags;
 use crate::imap::IMAPState;
 use crate::imap::ResponseInfo;
+use crate::parsing::imap::SearchArgs;
 use crate::{
     database::DBClient,
     imap::{self, IMAPOp},
@@ -186,8 +187,9 @@ impl FromStr for SearchKeys {
             "flagged" => SearchKeys::Flagged,
             "from" => SearchKeys::From(end),
             "header" => {
+                //see parsing/imap.rs
                 let (fieldname, rest) = end
-                    .split_once(" ")
+                    .split_once("`")
                     .ok_or(anyhow!("couldn't parse HEADER"))?;
                 SearchKeys::Header(fieldname.to_string(), rest.to_string())
             }
@@ -196,8 +198,8 @@ impl FromStr for SearchKeys {
             "not" => SearchKeys::Keyword(IMAPFlags::from_str(&end)?),
             "on" => SearchKeys::On(end),
             "or" => {
-                //let's hope it works
-                let (key1, key2) = end.split_once(" ").ok_or(anyhow!("couldn't parse OR"))?;
+                //let's hope it works, see parsing/imap.rs
+                let (key1, key2) = end.split_once("`").ok_or(anyhow!("couldn't parse OR"))?;
                 SearchKeys::Or(key1.to_string(), key2.to_string())
             }
             "seen" => SearchKeys::Seen,
@@ -220,5 +222,17 @@ impl FromStr for SearchKeys {
             _ => return Err(anyhow!("not implemented")),
         };
         Ok(result)
+    }
+}
+
+impl ToString for SearchKeys {
+    fn to_string(&self) -> String {
+        let raw_str = match self {
+            //idk
+            SearchKeys::All => "".to_string(),
+            SearchKeys::Text(s) => format!("data LIKE \"%{}%\"", s),
+            _ => "todo".to_string(),
+        };
+        raw_str
     }
 }

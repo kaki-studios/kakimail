@@ -1,6 +1,6 @@
 use std::{char, str::FromStr};
 
-use crate::smtp_common::Mail;
+use crate::{imap_op::search::SearchKeys, parsing::imap::SearchArgs, smtp_common::Mail};
 use anyhow::{anyhow, Context, Result};
 use chrono::FixedOffset;
 use libsql_client::{args, client::Client, Statement, Value};
@@ -399,6 +399,15 @@ impl DBClient {
             ))
             .await?;
         Ok(())
+    }
+    pub async fn search_query(&self, search_args: SearchArgs) -> Result<String> {
+        let db_args: Vec<_> = search_args
+            .search_keys
+            .iter()
+            .map(SearchKeys::to_string)
+            .collect();
+        tracing::debug!("db_args: {:?}", db_args);
+        Err(anyhow!("not implemented"))
     }
 }
 

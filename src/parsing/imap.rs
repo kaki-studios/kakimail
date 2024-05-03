@@ -95,7 +95,9 @@ pub fn search(input: &str) -> Result<SearchArgs, nom::Err<nom::error::Error<&str
                 //two strings
                 if let Some(x) = iterator.next() {
                     if let Some(y) = iterator.next() {
-                        new_args.push([arg.clone(), x.clone(), y.clone()].join(" "))
+                        //some illegal char, FIX
+                        let rest = [x.clone(), y.clone()].join("`");
+                        new_args.push([arg.clone(), rest].join(" "))
                     }
                 }
             }
@@ -116,8 +118,8 @@ pub fn search(input: &str) -> Result<SearchArgs, nom::Err<nom::error::Error<&str
 }
 
 pub struct SearchArgs {
-    return_opts: Vec<ReturnOptions>,
-    search_keys: Vec<SearchKeys>,
+    pub return_opts: Vec<ReturnOptions>,
+    pub search_keys: Vec<SearchKeys>,
 }
 
 impl SearchArgs {
