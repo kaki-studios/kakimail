@@ -331,8 +331,7 @@ impl DBClient {
     }
     pub async fn expunge(&self, mailbox_id: i32, uid: Option<(i32, i32)>) -> Result<Vec<i32>> {
         self.changes.send("* 1 EXPUNGE\r\n".to_owned()).await?;
-        //deleted is 3rd bit
-        let deleted = "__1__";
+        let deleted = IMAPFlags::Deleted.to_string();
         let statement = if let Some((start, end)) = uid {
             Statement::with_args(
                 "DELETE FROM mail WHERE uid BETWEEN ? AND ? AND flags like ? RETURNING _rowid_",
@@ -415,11 +414,24 @@ impl DBClient {
 #[repr(u8)]
 #[derive(Debug, Clone)]
 pub enum IMAPFlags {
-    Answered = 0,
-    Flagged = 1,
-    Deleted = 2,
-    Seen = 3,
-    Draft = 4,
+    Answered = 1 << 0,
+    Flagged = 1 << 1,
+    Deleted = 1 << 2,
+    Seen = 1 << 3,
+    Draft = 1 << 4,
+}
+
+impl ToString for IMAPFlags {
+    fn to_string(&self) -> String {
+        let raw_str = match self {
+            IMAPFlags::Answered => "____1",
+            IMAPFlags::Flagged => "___1_",
+            IMAPFlags::Deleted => "__1__",
+            IMAPFlags::Seen => "_1___",
+            IMAPFlags::Draft => "1____",
+        };
+        raw_str.to_string()
+    }
 }
 
 impl FromStr for IMAPFlags {

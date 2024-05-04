@@ -227,12 +227,44 @@ impl FromStr for SearchKeys {
 
 impl ToString for SearchKeys {
     fn to_string(&self) -> String {
-        let raw_str = match self {
-            //idk
-            SearchKeys::All => "".to_string(),
+        match self {
+            //idk, match anything
+            SearchKeys::All => "data LIKE \"%\"".to_string(),
+            //easiest
             SearchKeys::Text(s) => format!("data LIKE \"%{}%\"", s),
+            //headers are "x: y", right? +header can contain y anywhere
+            SearchKeys::Header(x, y) => format!("data LIKE \"%{}: %{}%\"", x, y),
+            //fuck it, same as text even though not supposed to be
+            SearchKeys::Body(s) => format!("data LIKE \"%{}%\"", s),
+            //the flags
+            SearchKeys::Answered => format!("flags LIKE {}", IMAPFlags::Answered.to_string()),
+            SearchKeys::Flagged => format!("flags LIKE {}", IMAPFlags::Flagged.to_string()),
+            SearchKeys::Deleted => format!("flags LIKE {}", IMAPFlags::Deleted.to_string()),
+            SearchKeys::Seen => format!("flags LIKE {}", IMAPFlags::Seen.to_string()),
+            SearchKeys::Draft => format!("flags LIKE {}", IMAPFlags::Draft.to_string()),
+            //unflags, FIX don't use replace
+            SearchKeys::Unanswered => format!(
+                "flags LIKE {}",
+                IMAPFlags::Answered.to_string().replace("1", "0")
+            ),
+            SearchKeys::Unflagged => format!(
+                "flags LIKE {}",
+                IMAPFlags::Flagged.to_string().replace("1", "0")
+            ),
+            SearchKeys::Undeleted => format!(
+                "flags LIKE {}",
+                IMAPFlags::Deleted.to_string().replace("1", "0")
+            ),
+            SearchKeys::Unseen => format!(
+                "flags LIKE {}",
+                IMAPFlags::Seen.to_string().replace("1", "0")
+            ),
+            SearchKeys::Undraft => format!(
+                "flags LIKE {}",
+                IMAPFlags::Draft.to_string().replace("1", "0")
+            ),
+            //
             _ => "todo".to_string(),
-        };
-        raw_str
+        }
     }
 }
