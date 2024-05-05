@@ -7,7 +7,7 @@ A simple and portable SMTP server, written in pure Rust (🚀🚀🚀). Anyone c
 - Incoming email receiving
 - Outgoing message sending
 - Support for most IMAP4rev2 commands (rfc 9051)
-- encryption on SMTP and IMAP (using STARTTLS) 
+- encryption on SMTP and IMAP (using STARTTLS, and implicit TLS ports) 
 
 
 ## TO-DO:

@@ -1,3 +1,4 @@
+use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -151,7 +152,7 @@ pub enum SearchKeys {
     Larger(i64),
     Not(Box<SearchKeys>),
     On(String),
-    Or(String, String),
+    Or(Box<(SearchKeys, SearchKeys)>),
     Seen,
     SentBefore(String),
     SentOn(String),
@@ -199,8 +200,13 @@ impl FromStr for SearchKeys {
             "on" => SearchKeys::On(end),
             "or" => {
                 //let's hope it works, see parsing/imap.rs
-                let (key1, key2) = end.split_once("`").ok_or(anyhow!("couldn't parse OR"))?;
-                SearchKeys::Or(key1.to_string(), key2.to_string())
+                let (key1_str, key2_str) =
+                    end.split_once("`").ok_or(anyhow!("couldn't parse OR"))?;
+                let keys = (
+                    SearchKeys::from_str(key1_str)?,
+                    SearchKeys::from_str(key2_str)?,
+                );
+                SearchKeys::Or(Box::new(keys))
             }
             "seen" => SearchKeys::Seen,
             "sentbefore" => SearchKeys::SentBefore(end),
@@ -230,11 +236,11 @@ impl ToString for SearchKeys {
         match self {
             //idk, match anything
             SearchKeys::All => "data LIKE \"%\"".to_string(),
-            //easiest
+            //TODO this is literally sql injection
             SearchKeys::Text(s) => format!("data LIKE \"%{}%\"", s),
             //headers are "x: y", right? +header can contain y anywhere
             SearchKeys::Header(x, y) => format!("data LIKE \"%{}: %{}%\"", x, y),
-            //fuck it, same as text even though not supposed to be
+            //whatever, same as text even though not supposed to be
             SearchKeys::Body(s) => format!("data LIKE \"%{}%\"", s),
             //the flags
             SearchKeys::Answered => format!("flags LIKE {}", IMAPFlags::Answered.to_string()),
@@ -263,7 +269,18 @@ impl ToString for SearchKeys {
                 "flags LIKE {}",
                 IMAPFlags::Draft.to_string().replace("1", "0")
             ),
-            //
+            //somewhat scuffed
+            SearchKeys::Not(s) => s.to_string().replace("LIKE", "NOT LIKE"),
+            //test these please
+            SearchKeys::Larger(n) => format!("length(data) > {}", n),
+            SearchKeys::Smaller(n) => format!("length(data) < {}", n),
+            SearchKeys::Or(b) => {
+                let keys = b.deref();
+                let (str1, str2) = (keys.0.to_string(), keys.1.to_string());
+                //idk about these parentheses
+                format!("({} OR {})", str1, str2)
+            }
+            //TODO header keys (to, subject, etc)
             _ => "todo".to_string(),
         }
     }

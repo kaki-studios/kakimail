@@ -12,10 +12,10 @@
     - [X] support for command arguments inside quotes, eg `A000 SUBSCRIBE "Personal/School Stuff"` (did it dirtily)
     - [ ] all commands
 - [X] support for some SMTP extensions **MOST NOTABLY STARTTLS**
-- [ ] support for implicit tls ports
+- [X] support for implicit tls ports
 - [X] TLS with [tokio-rustls](https://crates.io/crates/tokio-rustls)
     - [X] use certs from porkbun (use their api to retrieve it)
 - [ ] dmarc, dkim and spf or whatever
-- [ ] parsing with nom or logos (for better parsing)
+- [ ] parsing with nom (for difficult commands)
 
 other stuff?? add here!

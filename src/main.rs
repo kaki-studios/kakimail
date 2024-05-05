@@ -7,6 +7,8 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio_rustls::TlsAcceptor;
 
+use crate::tls::StreamType;
+
 mod database;
 mod imap;
 mod imap_op;
@@ -28,6 +30,8 @@ async fn main() -> Result<()> {
     let smtp_port = args.next().unwrap_or("25".to_string());
     let smtp_subm = args.next().unwrap_or("587".to_string());
     let imap_port = args.next().unwrap_or("143".to_string());
+    let imaps_port = args.next().unwrap_or("993".to_string());
+    let smtps_subm = args.next().unwrap_or("465".to_string());
 
     let domain = &args.next().unwrap_or("smtp.kaki.foo".to_string());
 
@@ -75,6 +79,8 @@ async fn main() -> Result<()> {
     let incoming_listener = TcpListener::bind(format!("{smtp_addr}:{smtp_port}")).await?;
     let outgoing_listener = TcpListener::bind(format!("{smtp_addr}:{smtp_subm}")).await?;
     let imap_listener = TcpListener::bind(format!("{smtp_addr}:{imap_port}")).await?;
+    let imaps_listener = TcpListener::bind(format!("{smtp_addr}:{imaps_port}")).await?;
+    let smtps_listener = TcpListener::bind(format!("{smtp_addr}:{smtps_subm}")).await?;
     //TODO implicit imap tls listener!
     tracing::info!("listening on: {}", smtp_addr);
     tracing::info!("smtp port is: {}", smtp_port);
@@ -111,11 +117,32 @@ async fn main() -> Result<()> {
                     .await
                     .ok();
             }
+            Ok((smtps_stream, smtps_addr)) = smtps_listener.accept() => {
+                tracing::info!("recieved outgoing smtps connection from {}", smtps_addr);
+                tokio::task::LocalSet::new()
+                    .run_until(async move {
+                        let smtp = smtp_outgoing::SmtpOutgoing::new(domain.to_string(), smtps_stream, new_tx.clone(), true,
+                            acceptor.clone()).await?;
+                        smtp.serve().await
+                    })
+                    .await
+                    .ok();
+            }
             Ok((imap_stream, imap_addr)) = imap_listener.accept() => {
                 tracing::info!("recieved imap connection from {}", imap_addr);
                 tokio::task::LocalSet::new()
                     .run_until(async move {
                         let imap = imap::IMAP::new(imap_stream,acceptor.clone(),false, new_tx.clone(),loop_rx).await?;
+                        imap.serve().await
+                    })
+                    .await
+                    .ok();
+            }
+            Ok((imaps_stream, imaps_addr)) = imaps_listener.accept() => {
+                tracing::info!("recieved imap connection from {}", imaps_addr);
+                tokio::task::LocalSet::new()
+                    .run_until(async move {
+                        let imap = imap::IMAP::new(imaps_stream,acceptor.clone(),true, new_tx.clone(),loop_rx).await?;
                         imap.serve().await
                     })
                     .await
