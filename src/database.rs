@@ -95,11 +95,10 @@ impl DBClient {
     ) -> Result<()> {
         self.changes.send("* 1 EXISTS\r\n".to_owned()).await?;
         let time = if let Some(x) = datetime {
-            //TODO extract the format string
-            x.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+            x.format(crate::parsing::DB_DATETIME_FMT).to_string()
         } else {
             chrono::offset::Utc::now()
-                .format("%Y-%m-%d %H:%M:%S%.3f")
+                .format(crate::parsing::DB_DATETIME_FMT)
                 .to_string()
         };
         let next_uid = self

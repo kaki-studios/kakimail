@@ -5,6 +5,7 @@ import imaplib
 from dotenv import dotenv_values
 
 import sys
+import time
 
 
 config = dotenv_values("../.env")
@@ -34,7 +35,7 @@ client.starttls()
 client.authenticate("PLAIN", callback)
 client.list()
 client.status("INBOX", "(UIDNEXT MESSAGES)")
-client.append("INBOX", "", (1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1), mail)
+client.append("INBOX", "", time.time(), mail)
 client.select("INBOX", False)
 (typ, [data]) = client.search(None, "RETURN (MIN COUNT) ALL")
 print(typ)

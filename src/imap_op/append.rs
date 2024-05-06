@@ -4,7 +4,6 @@ use crate::imap::{IMAPOp, IMAPState, ResponseInfo};
 
 pub struct Append;
 
-const DATETIME_FMT: &'static str = "%d-%b-%y %H:%M:%S %z";
 impl IMAPOp for Append {
     async fn process(
         tag: &str,
@@ -22,6 +21,7 @@ impl IMAPOp for Append {
             IMAPState::Selected(ref x) => x.user_id,
             _ => return Err(anyhow!("bad state")),
         };
+        dbg!(&args);
         let mut msg = args.split_whitespace();
         //saved-messages (\Seen) "datetime" {326} ....
         let _mailbox_name = msg.next().context("should provide mailbox name")?;
@@ -32,16 +32,11 @@ impl IMAPOp for Append {
         let mut datetime_raw = None;
         let mut count_raw = None;
         while let Some(arg) = msg.next() {
-            if arg.len() == 0 {
-                //just in case
-                continue;
-            }
-            if count_raw.is_some() {
-                //it's the last argument before the mail,
-                //we should brak
-            }
-            match arg.chars().next().unwrap_or(' ') {
+            dbg!(&arg);
+            let mut chars = arg.chars();
+            match chars.next().unwrap_or(' ') {
                 '(' => {
+                    //TODO this shouldn't work
                     flags_raw = Some(arg);
                 }
                 '{' => {
@@ -50,8 +45,30 @@ impl IMAPOp for Append {
                     //this is the last arg, we should break
                 }
                 '"' => {
-                    //TODO this doesn't work
-                    datetime_raw = Some(arg);
+                    //TODO support timezones (idk why it doesn't work)
+                    let start = chars.collect::<String>();
+
+                    let mut stop_next = false;
+                    let middle = msg
+                        .clone()
+                        //very clunky but what can you do?
+                        .map_while(move |i| {
+                            if stop_next {
+                                return None;
+                            }
+                            if i.ends_with("\"") {
+                                stop_next = true;
+                                return i.to_string().strip_suffix("\"").map(|x| x.to_string());
+                            }
+                            Some(i.to_string())
+                        })
+                        .collect::<Vec<String>>()
+                        .join(" ");
+
+                    tracing::debug!("parsed datetime is {}", start);
+                    let datetime = [start, middle].join(" ");
+                    tracing::debug!("datetime format is {}", crate::parsing::IMAP_DATETIME_FMT);
+                    datetime_raw = Some(datetime);
                 }
                 _ => {}
             }
@@ -83,9 +100,9 @@ impl IMAPOp for Append {
             //TODO
         }
         if let Some(arg) = datetime_raw {
-            let stripped_arg = arg.chars().filter(|c| c != &'"').collect::<String>();
-            datetime = chrono::DateTime::parse_from_str(&stripped_arg, DATETIME_FMT)
-                .map_err(|e| tracing::error!("{}", e))
+            dbg!(&arg);
+            datetime = chrono::DateTime::parse_from_str(&arg, crate::parsing::IMAP_DATETIME_FMT)
+                .map_err(|e| tracing::error!("error parsing datetime in append: {}", e))
                 .ok();
         }
 

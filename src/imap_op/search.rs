@@ -154,6 +154,7 @@ pub enum SearchKeys {
     On(String),
     Or(Box<(SearchKeys, SearchKeys)>),
     Seen,
+    //TODO change to DateTime
     SentBefore(String),
     SentOn(String),
     SentSince(String),
