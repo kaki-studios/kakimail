@@ -83,12 +83,23 @@ pub fn search(input: &str) -> Result<SearchArgs, nom::Err<nom::error::Error<&str
             "all" | "answered" | "deleted" | "draft" | "flagged" | "seen" | "unanswered"
             | "undeleted" | "undraft" | "unflagged" | "unseen" => new_args.push(arg.to_string()),
 
-            "bcc" | "before" | "body" | "cc" | "from" | "keyword" | "larger" | "not" | "on"
-            | "sentbefore" | "senton" | "sentsince" | "since" | "smaller" | "subject" | "text"
-            | "to" | "uid" | "unkeyword" => {
+            "bcc" | "body" | "cc" | "from" | "keyword" | "larger" | "not" | "smaller"
+            | "subject" | "text" | "to" | "uid" | "unkeyword" => {
                 //find a way to do this without cloning
                 if let Some(x) = iterator.next() {
                     new_args.push([arg.clone(), x.clone()].join(" "))
+                }
+            }
+            //Time-related
+            "before" | "on" | "sentbefore" | "senton" | "sentsince" | "since" => {
+                //FIX spaghetti code
+                //remember that the time format contains 2 spaces
+                if let Some(x) = iterator.next() {
+                    if let Some(y) = iterator.next() {
+                        if let Some(z) = iterator.next() {
+                            new_args.push([arg.clone(), x.clone(), y.clone(), z.clone()].join(" "));
+                        }
+                    }
                 }
             }
             "header" | "or" => {
@@ -206,6 +217,8 @@ mod tests {
     #[test]
     fn test_search() {
         search("RETURN (MIN) UNSEEN BCC test TEXT \"some text\"").ok();
+        search("RETURN (MIN) UNSEEN BCC test TEXT \"some text\" ON 02-Oct-2020 17:16:10 +0300")
+            .ok();
     }
     #[test]
     fn test_list() {

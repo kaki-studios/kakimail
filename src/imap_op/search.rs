@@ -6,12 +6,13 @@ use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Ok;
 use anyhow::Result;
+use chrono::FixedOffset;
 use tokio::sync::Mutex;
 
 use crate::database::IMAPFlags;
 use crate::imap::IMAPState;
 use crate::imap::ResponseInfo;
-use crate::parsing::imap::SearchArgs;
+use crate::parsing;
 use crate::{
     database::DBClient,
     imap::{self, IMAPOp},
@@ -140,7 +141,7 @@ pub enum SearchKeys {
     All,
     Answered,
     Bcc(String),
-    Before(String),
+    Before(chrono::DateTime<FixedOffset>),
     Body(String),
     Cc(String),
     Deleted,
@@ -151,14 +152,14 @@ pub enum SearchKeys {
     Keyword(IMAPFlags),
     Larger(i64),
     Not(Box<SearchKeys>),
-    On(String),
+    On(chrono::DateTime<FixedOffset>),
     Or(Box<(SearchKeys, SearchKeys)>),
     Seen,
     //TODO change to DateTime
-    SentBefore(String),
-    SentOn(String),
-    SentSince(String),
-    Since(String),
+    SentBefore(chrono::DateTime<FixedOffset>),
+    SentOn(chrono::DateTime<FixedOffset>),
+    SentSince(chrono::DateTime<FixedOffset>),
+    Since(chrono::DateTime<FixedOffset>),
     Smaller(i64),
     Subject(String),
     Text(String),
@@ -181,7 +182,10 @@ impl FromStr for SearchKeys {
             "all" => SearchKeys::All,
             "answered" => SearchKeys::Answered,
             "bcc" => SearchKeys::Bcc(end),
-            "before" => SearchKeys::Before(end),
+            "before" => {
+                let datetime = chrono::DateTime::parse_from_str(&end, parsing::IMAP_DATETIME_FMT)?;
+                SearchKeys::Before(datetime)
+            }
             "body" => SearchKeys::Body(end),
             "cc" => SearchKeys::Cc(end),
             "deleted" => SearchKeys::Deleted,
@@ -198,7 +202,10 @@ impl FromStr for SearchKeys {
             "keyword" => SearchKeys::Keyword(IMAPFlags::from_str(&end)?),
             "larger" => SearchKeys::Larger(i64::from_str(&end)?),
             "not" => SearchKeys::Keyword(IMAPFlags::from_str(&end)?),
-            "on" => SearchKeys::On(end),
+            "on" => {
+                let datetime = chrono::DateTime::parse_from_str(&end, parsing::IMAP_DATETIME_FMT);
+                SearchKeys::On(datetime?)
+            }
             "or" => {
                 //let's hope it works, see parsing/imap.rs
                 let (key1_str, key2_str) =
@@ -210,10 +217,22 @@ impl FromStr for SearchKeys {
                 SearchKeys::Or(Box::new(keys))
             }
             "seen" => SearchKeys::Seen,
-            "sentbefore" => SearchKeys::SentBefore(end),
-            "senton" => SearchKeys::SentOn(end),
-            "sentsince" => SearchKeys::SentSince(end),
-            "since" => SearchKeys::Since(end),
+            "sentbefore" => {
+                let datetime = chrono::DateTime::parse_from_str(&end, parsing::IMAP_DATETIME_FMT)?;
+                SearchKeys::SentBefore(datetime)
+            }
+            "senton" => {
+                let datetime = chrono::DateTime::parse_from_str(&end, parsing::IMAP_DATETIME_FMT)?;
+                SearchKeys::SentOn(datetime)
+            }
+            "sentsince" => {
+                let datetime = chrono::DateTime::parse_from_str(&end, parsing::IMAP_DATETIME_FMT)?;
+                SearchKeys::SentSince(datetime)
+            }
+            "since" => {
+                let datetime = chrono::DateTime::parse_from_str(&end, parsing::IMAP_DATETIME_FMT)?;
+                SearchKeys::Since(datetime)
+            }
             "smaller" => SearchKeys::Smaller(i64::from_str(&end)?),
             "subject" => SearchKeys::Subject(end),
             "text" => SearchKeys::Text(end),
