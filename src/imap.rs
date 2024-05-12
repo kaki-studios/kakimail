@@ -102,18 +102,17 @@ impl IMAP {
             return Ok((state, stream));
         }
         tracing::info!("Received {raw_msg} in state {:?}", state);
-        let mut msg = raw_msg.split_whitespace();
-        let tag = msg.next().context("received empty tag")?;
-        let command = msg.next().context("received empty command")?.to_lowercase();
+        let (tag, rest) = raw_msg.split_once(" ").context("did't receive tag")?;
+        let (command, args) = rest
+            .split_once(" ")
+            .unwrap_or(rest.split_once("\r\n").context("didn't provide command")?);
 
         dbg!(&command);
-        let new = msg.clone();
-        let args = new.collect::<Vec<&str>>().join(" ");
         //TODO
         //-implement the uid command
         //2. add extra `uid.rs` file like the other commands, and
         //make a base function for commands that can have uid
-        let (resp, new_state, info) = exec_command(&command, tag, &args, state, db.clone()).await?;
+        let (resp, new_state, info) = exec_command(command, tag, &args, state, db.clone()).await?;
         for item in &resp {
             stream.write_all(&item).await?;
         }

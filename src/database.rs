@@ -1,6 +1,10 @@
 use std::{char, str::FromStr};
 
-use crate::{imap_op::search::SearchKeys, parsing::imap::SearchArgs, smtp_common::Mail};
+use crate::{
+    imap_op::search::{ReturnOptions, SearchKeys},
+    parsing::imap::SearchArgs,
+    smtp_common::Mail,
+};
 use anyhow::{anyhow, Context, Result};
 use chrono::FixedOffset;
 use libsql_client::{args, client::Client, Statement, Value};
@@ -398,13 +402,31 @@ impl DBClient {
             .await?;
         Ok(())
     }
-    pub async fn search_query(&self, search_args: SearchArgs) -> Result<String> {
+    pub async fn search_query(&self, search_args: SearchArgs, mailbox_id: i32) -> Result<String> {
         let db_args: Vec<_> = search_args
             .search_keys
             .iter()
-            .map(SearchKeys::to_string)
+            .map(SearchKeys::to_sql_arg)
             .collect();
-        tracing::debug!("db_args: {:?}", db_args);
+        let (values, raw_str) = db_args
+            .iter()
+            //smart af, we need mailbox_id as the first value
+            .fold((args!(mailbox_id).to_vec(), String::new()), |mut acc, n| {
+                acc.0.extend(n.0.clone());
+                acc.1.extend(n.1.chars());
+                acc
+            });
+        tracing::debug!(
+            "db_args: {:?}, values: {:?}, raw_str: {:?}",
+            db_args,
+            values,
+            raw_str
+        );
+        //TODO fix this and make it conditional on search_args.return_opts
+        //e.g. if return_opts includes Min, then add
+        //SELECT MIN(uid) as min_uid...
+        let string = "SELECT uid FROM mail WHERE mailbox_id = ".to_owned() + &raw_str;
+
         Err(anyhow!("not implemented"))
     }
 }

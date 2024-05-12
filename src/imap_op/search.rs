@@ -1,3 +1,8 @@
+//TODO
+//-implement to_sql_arg()
+//-do some stuff in database.rs
+//-done!
+
 use std::ops::Deref;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -253,7 +258,7 @@ impl FromStr for SearchKeys {
 }
 
 impl SearchKeys {
-    fn to_sql_arg(&self) -> (Vec<Value>, String) {
+    pub fn to_sql_arg(&self) -> (Vec<Value>, String) {
         //TODO
         let string = match self {
             //idk, match anything
@@ -296,12 +301,15 @@ impl SearchKeys {
             //test these please
             SearchKeys::Larger(n) => format!("length(data) > {}", n),
             SearchKeys::Smaller(n) => format!("length(data) < {}", n),
-            // SearchKeys::Or(b) => {
-            //     let keys = b.deref();
-            //     let (str1, str2) = (keys.0.to_string(), keys.1.to_string());
-            //     //idk about these parentheses
-            //     format!("({} OR {})", str1, str2)
-            // }
+            SearchKeys::Or(b) => {
+                let keys = b.deref();
+                let (mut result1, result2) = (keys.0.to_sql_arg(), keys.1.to_sql_arg());
+                result1.0.extend(result2.0);
+                result1.1.extend(result2.1.chars());
+                //TODO convert every othes command to use (Vec<Value, String)
+                //result1 holds the result
+                String::from("error")
+            }
             //TODO header keys (to, subject, etc)
             _ => "todo".to_string(),
         };
