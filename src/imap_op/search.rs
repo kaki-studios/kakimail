@@ -7,6 +7,7 @@ use anyhow::Context;
 use anyhow::Ok;
 use anyhow::Result;
 use chrono::FixedOffset;
+use libsql_client::Value;
 use tokio::sync::Mutex;
 
 use crate::database::IMAPFlags;
@@ -251,9 +252,10 @@ impl FromStr for SearchKeys {
     }
 }
 
-impl ToString for SearchKeys {
-    fn to_string(&self) -> String {
-        match self {
+impl SearchKeys {
+    fn to_sql_arg(&self) -> (Vec<Value>, String) {
+        //TODO
+        let string = match self {
             //idk, match anything
             SearchKeys::All => "data LIKE \"%\"".to_string(),
             //TODO this is literally sql injection
@@ -290,18 +292,19 @@ impl ToString for SearchKeys {
                 IMAPFlags::Draft.to_string().replace("1", "0")
             ),
             //somewhat scuffed
-            SearchKeys::Not(s) => s.to_string().replace("LIKE", "NOT LIKE"),
+            // SearchKeys::Not(s) => s.to_string().replace("LIKE", "NOT LIKE"),
             //test these please
             SearchKeys::Larger(n) => format!("length(data) > {}", n),
             SearchKeys::Smaller(n) => format!("length(data) < {}", n),
-            SearchKeys::Or(b) => {
-                let keys = b.deref();
-                let (str1, str2) = (keys.0.to_string(), keys.1.to_string());
-                //idk about these parentheses
-                format!("({} OR {})", str1, str2)
-            }
+            // SearchKeys::Or(b) => {
+            //     let keys = b.deref();
+            //     let (str1, str2) = (keys.0.to_string(), keys.1.to_string());
+            //     //idk about these parentheses
+            //     format!("({} OR {})", str1, str2)
+            // }
             //TODO header keys (to, subject, etc)
             _ => "todo".to_string(),
-        }
+        };
+        (vec![], "".to_string())
     }
 }
