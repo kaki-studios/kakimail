@@ -12,6 +12,7 @@ use anyhow::Context;
 use anyhow::Ok;
 use anyhow::Result;
 use chrono::FixedOffset;
+use libsql_client::args;
 use libsql_client::Value;
 use tokio::sync::Mutex;
 
@@ -258,61 +259,83 @@ impl FromStr for SearchKeys {
 }
 
 impl SearchKeys {
-    pub fn to_sql_arg(&self) -> (Vec<Value>, String) {
-        //TODO
-        let string = match self {
+    pub fn to_sql_arg(&self) -> (String, Vec<Value>) {
+        //NOTE using String instead of &'static str because of SearchKeys::Or(x)
+        //TODO implement this for SearchArgs insead of SearchKeys because then you can make it
+        //conditional based on ReturnOptions
+        //
+        //example: some function f on SearchArgs that calls
+        //SearchKeys::to_sql_arg(&self, return_opts: ReturnOptions) -> (String, Vec<Value>)
+        //for each item in SearchArgs.search_keys
+
+        match self {
             //idk, match anything
-            SearchKeys::All => "data LIKE \"%\"".to_string(),
-            //TODO this is literally sql injection
-            SearchKeys::Text(s) => format!("data LIKE \"%{}%\"", s),
+            SearchKeys::All => ("data LIKE \"%\"".to_string(), args!().to_vec()),
+            //idk if this is the right syntax
+            SearchKeys::Text(s) => ("data LIKE \"%?%\"".to_string(), args!(s).to_vec()),
             //headers are "x: y", right? +header can contain y anywhere
-            SearchKeys::Header(x, y) => format!("data LIKE \"%{}: %{}%\"", x, y),
+            SearchKeys::Header(x, y) => ("data LIKE \"?: %?%\"".to_string(), args!(x, y).to_vec()),
             //whatever, same as text even though not supposed to be
-            SearchKeys::Body(s) => format!("data LIKE \"%{}%\"", s),
+            SearchKeys::Body(s) => ("data LIKE \"%?%\"".to_owned(), args!(s).to_vec()),
             //the flags
-            SearchKeys::Answered => format!("flags LIKE {}", IMAPFlags::Answered.to_string()),
-            SearchKeys::Flagged => format!("flags LIKE {}", IMAPFlags::Flagged.to_string()),
-            SearchKeys::Deleted => format!("flags LIKE {}", IMAPFlags::Deleted.to_string()),
-            SearchKeys::Seen => format!("flags LIKE {}", IMAPFlags::Seen.to_string()),
-            SearchKeys::Draft => format!("flags LIKE {}", IMAPFlags::Draft.to_string()),
+            SearchKeys::Answered => (
+                "flags LIKE ?".to_owned(),
+                args!(IMAPFlags::Answered.to_string()).to_vec(),
+            ),
+            SearchKeys::Flagged => (
+                "flags LIKE ?".to_owned(),
+                args!(IMAPFlags::Flagged.to_string()).to_vec(),
+            ),
+            SearchKeys::Deleted => (
+                "flags LIKE ?".to_owned(),
+                args!(IMAPFlags::Deleted.to_string()).to_vec(),
+            ),
+            SearchKeys::Seen => (
+                "flags LIKE ?".to_owned(),
+                args!(IMAPFlags::Seen.to_string()).to_vec(),
+            ),
+            SearchKeys::Draft => (
+                "flags LIKE ?".to_owned(),
+                args!(IMAPFlags::Draft.to_string()).to_vec(),
+            ),
             //unflags, FIX don't use replace
-            SearchKeys::Unanswered => format!(
-                "flags LIKE {}",
-                IMAPFlags::Answered.to_string().replace("1", "0")
+            SearchKeys::Unanswered => (
+                "flags LIKE ?".to_owned(),
+                args!(IMAPFlags::Answered.to_string().replace("1", "0")).to_vec(),
             ),
-            SearchKeys::Unflagged => format!(
-                "flags LIKE {}",
-                IMAPFlags::Flagged.to_string().replace("1", "0")
+            SearchKeys::Unflagged => (
+                "flags LIKE ?".to_owned(),
+                args!(IMAPFlags::Flagged.to_string().replace("1", "0")).to_vec(),
             ),
-            SearchKeys::Undeleted => format!(
-                "flags LIKE {}",
-                IMAPFlags::Deleted.to_string().replace("1", "0")
+            SearchKeys::Undeleted => (
+                "flags LIKE ?".to_owned(),
+                args!(IMAPFlags::Deleted.to_string().replace("1", "0")).to_vec(),
             ),
-            SearchKeys::Unseen => format!(
-                "flags LIKE {}",
-                IMAPFlags::Seen.to_string().replace("1", "0")
+            SearchKeys::Unseen => (
+                "flags LIKE ?".to_owned(),
+                args!(IMAPFlags::Seen.to_string().replace("1", "0")).to_vec(),
             ),
-            SearchKeys::Undraft => format!(
-                "flags LIKE {}",
-                IMAPFlags::Draft.to_string().replace("1", "0")
+            SearchKeys::Undraft => (
+                "flags LIKE ?".to_owned(),
+                args!(IMAPFlags::Draft.to_string().replace("1", "0")).to_vec(),
             ),
             //somewhat scuffed
             // SearchKeys::Not(s) => s.to_string().replace("LIKE", "NOT LIKE"),
             //test these please
-            SearchKeys::Larger(n) => format!("length(data) > {}", n),
-            SearchKeys::Smaller(n) => format!("length(data) < {}", n),
+            SearchKeys::Larger(n) => ("length(data) > ?".to_owned(), args!(*n).to_vec()),
+            SearchKeys::Smaller(n) => ("length(data) < ?".to_owned(), args!(*n).to_vec()),
             SearchKeys::Or(b) => {
                 let keys = b.deref();
-                let (mut result1, result2) = (keys.0.to_sql_arg(), keys.1.to_sql_arg());
-                result1.0.extend(result2.0);
-                result1.1.extend(result2.1.chars());
+                let (mut result, result2) = (keys.0.to_sql_arg(), keys.1.to_sql_arg());
+                result.1.extend(result2.1);
+                result.0.extend(" OR ".chars());
+                result.0.extend(result2.0.chars());
                 //TODO convert every othes command to use (Vec<Value, String)
                 //result1 holds the result
-                String::from("error")
+                result
             }
             //TODO header keys (to, subject, etc)
-            _ => "todo".to_string(),
-        };
-        (vec![], "".to_string())
+            _ => ("".to_owned(), vec![]),
+        }
     }
 }

@@ -72,7 +72,15 @@ pub fn search(input: &str) -> Result<SearchArgs, nom::Err<nom::error::Error<&str
         Some((rest, opts)) => (rest, Some(opts)),
         None => (input, None),
     };
-    println!("{:?}, {:?}", args, return_opts);
+    println!("info: {:?}, {:?}", args, return_opts);
+    let parsed_return_opts = return_opts
+        .iter()
+        .flatten()
+        .map(|i| *i)
+        .map(ReturnOptions::from_str)
+        .flatten()
+        .collect::<Vec<ReturnOptions>>();
+
     //TODO support quotes
     let parsed_args = parse_list(args)?;
     let mut iterator = parsed_args.iter();
@@ -118,16 +126,24 @@ pub fn search(input: &str) -> Result<SearchArgs, nom::Err<nom::error::Error<&str
             }
         }
     }
+
     let searchkeys: Vec<SearchKeys> = new_args
         .iter()
         .map(|x| SearchKeys::from_str(x))
         .flatten()
         .collect();
 
-    println!("{:?}, {:?}, {:?}", parsed_args, new_args, searchkeys);
-    Ok(SearchArgs::new())
+    println!(
+        "parsed_args: {:?}\nnew_args: {:?}\nsearchkeys: {:?}",
+        parsed_args, new_args, searchkeys
+    );
+    Ok(SearchArgs {
+        return_opts: parsed_return_opts,
+        search_keys: searchkeys,
+    })
 }
 
+#[derive(Debug)]
 pub struct SearchArgs {
     pub return_opts: Vec<ReturnOptions>,
     pub search_keys: Vec<SearchKeys>,
@@ -217,8 +233,17 @@ mod tests {
     #[test]
     fn test_search() {
         search("RETURN (MIN) UNSEEN BCC test TEXT \"some text\"").ok();
-        search("RETURN (MIN) UNSEEN BCC test TEXT \"some text\" ON 02-Oct-2020 17:16:10 +0300")
-            .ok();
+        let s =
+            search("RETURN (MIN) UNSEEN BCC test TEXT \"some text\" ON 02-Oct-2020 17:16:10 +0300")
+                .unwrap();
+        dbg!(&s);
+        let x = s.search_keys.iter().fold(String::new(), |mut acc, i| {
+            let j = i.to_sql_arg();
+            dbg!(&j);
+            acc.extend(j.0.chars());
+            acc
+        });
+        dbg!(x);
     }
     #[test]
     fn test_list() {

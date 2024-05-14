@@ -408,12 +408,12 @@ impl DBClient {
             .iter()
             .map(SearchKeys::to_sql_arg)
             .collect();
-        let (values, raw_str) = db_args
+        let (raw_str, values) = db_args
             .iter()
             //smart af, we need mailbox_id as the first value
-            .fold((args!(mailbox_id).to_vec(), String::new()), |mut acc, n| {
-                acc.0.extend(n.0.clone());
-                acc.1.extend(n.1.chars());
+            .fold((String::new(), args!(mailbox_id).to_vec()), |mut acc, n| {
+                acc.1.extend(n.1.clone());
+                acc.0.extend(n.0.chars());
                 acc
             });
         tracing::debug!(
