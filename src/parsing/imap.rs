@@ -237,13 +237,14 @@ mod tests {
             search("RETURN (MIN) UNSEEN BCC test TEXT \"some text\" ON 02-Oct-2020 17:16:10 +0300")
                 .unwrap();
         dbg!(&s);
-        let x = s.search_keys.iter().fold(String::new(), |mut acc, i| {
-            let j = i.to_sql_arg();
-            dbg!(&j);
-            acc.extend(j.0.chars());
-            acc
-        });
-        dbg!(x);
+        // let x = s.search_keys.iter().fold(String::new(), |mut acc, i| {
+        //     let j = i.to_sql_arg();
+        //     dbg!(&j);
+        //     acc.extend(j.0.chars());
+        //     acc
+        // });
+        // dbg!(x);
+        crate::database::DBClient::get_search_query(s, 0);
     }
     #[test]
     fn test_list() {

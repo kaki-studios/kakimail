@@ -402,30 +402,76 @@ impl DBClient {
             .await?;
         Ok(())
     }
-    pub async fn search_query(&self, search_args: SearchArgs, mailbox_id: i32) -> Result<String> {
+    pub fn get_search_query(search_args: SearchArgs, mailbox_id: i32) -> Result<Statement> {
         let db_args: Vec<_> = search_args
             .search_keys
             .iter()
             .map(SearchKeys::to_sql_arg)
             .collect();
+        let return_string = search_args
+            .return_opts
+            .iter()
+            .map(|i| {
+                match i {
+                    ReturnOptions::Min => "MIN(uid) as min_uid",
+                    ReturnOptions::Max => "MAX(uid) as max_uid",
+                    ReturnOptions::All => "uid",
+                    ReturnOptions::Count => "COUNT(uid) as count_uid",
+                    //TODO save should save the result in a variable called $
+                    ReturnOptions::Save => "",
+                }
+            })
+            //dirty, filters out ReturnOptions::Save bc it's not implemented
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<&str>>()
+            .join(" ");
         let (raw_str, values) = db_args
             .iter()
-            //smart af, we need mailbox_id as the first value
-            .fold((String::new(), args!(mailbox_id).to_vec()), |mut acc, n| {
-                acc.1.extend(n.1.clone());
-                acc.0.extend(n.0.chars());
-                acc
-            });
+            .filter(|(i, _)| !i.is_empty())
+            //smart, we need return_string as the first value and mailbox_id as the second value
+            .fold(
+                (String::new(), args!(return_string, mailbox_id).to_vec()),
+                |mut acc, n| {
+                    acc.1.extend(n.1.clone());
+                    acc.0.extend(n.0.chars());
+                    acc.0.extend(" AND ".chars());
+                    acc
+                },
+            );
+        //dirty
+        let raw_str = raw_str
+            .strip_suffix(" AND ")
+            .context("should always happen")?;
         tracing::debug!(
             "db_args: {:?}, values: {:?}, raw_str: {:?}",
             db_args,
             values,
             raw_str
         );
-        //TODO fix this and make it conditional on search_args.return_opts
-        //e.g. if return_opts includes Min, then add
-        //SELECT MIN(uid) as min_uid...
-        let string = "SELECT uid FROM mail WHERE mailbox_id = ".to_owned() + &raw_str;
+
+        let string = "SELECT ? FROM mail WHERE mailbox_id = ? AND ".to_string() + &raw_str;
+        println!("{}\n{:?}", string, values);
+        let stmt = Statement::with_args(string, &values);
+        println!("{}", stmt.to_string());
+        Ok(stmt)
+    }
+    pub async fn exec_search_query(
+        &self,
+        search_args: SearchArgs,
+        mailbox_id: i32,
+    ) -> Result<String> {
+        let stmt = Self::get_search_query(search_args, mailbox_id)?;
+        //NOTE get_search_query is seperate for unit tests
+        let result = self.db.execute(stmt).await?;
+        //TODO right string formatting
+        let test_str = result
+            .rows
+            .iter()
+            .map(|s| s.values.clone())
+            .flatten()
+            .map(|s| s.to_string())
+            .collect::<Vec<String>>()
+            .join(" ");
 
         Err(anyhow!("not implemented"))
     }
