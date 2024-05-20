@@ -5,7 +5,7 @@
 - [X] testing (using python scripts hehe)
 - [X] email sending (at least to kakimail)
 - [X] enforce auth when submitting email through port 587
-- [X] some kind of database
+- [X] database
 - [ ] IMAP
     - [X] split `imap.rs` into multiple files
     - [x] support for multiple mailboxes and namespacing (see next example)
@@ -17,5 +17,6 @@
     - [X] use certs from porkbun (use their api to retrieve it)
 - [ ] dmarc, dkim and spf or whatever
 - [ ] parsing with nom (for difficult commands)
+    - [X] search
 
 other stuff?? add here!

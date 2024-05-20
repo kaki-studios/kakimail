@@ -53,68 +53,20 @@ pub(super) async fn search_or_uid(
         return Err(anyhow!("bad state"));
     };
 
-    let mut ret: Vec<ReturnOptions> = vec![];
-    //used later
-    let msg_count = db
+    //TODO some info might be in next command like
+    //what the fuck
+    let search_args = parsing::imap::search(args)?;
+    let result = db
         .lock()
         .await
-        .mail_count(Some(selected_state.mailbox_id))
+        .exec_search_query(search_args, selected_state.mailbox_id, uid)
         .await?;
+    let response = vec![
+        result.as_bytes().to_vec(),
+        format!("{} OK SEARCH completed\r\n", tag).into(),
+    ];
 
-    let mut msg = args.split_whitespace();
-    while let Some(arg) = msg.next() {
-        if arg.starts_with("{") {
-            //check the rfc if you don't know what this is for.
-            //basically dirty parsing
-            //probably should be used!!
-            continue;
-        }
-        if arg.to_lowercase() == "charset" {
-            if let Some(set) = msg.next() {
-                if set.to_lowercase() != "utf-8" {
-                    return Ok((
-                        vec![format!("{} BAD unsupported charset", tag)
-                            .as_bytes()
-                            .to_vec()],
-                        state,
-                        ResponseInfo::Regular,
-                    ));
-                }
-            }
-            continue;
-        }
-        if arg.to_lowercase() == "return" {
-            loop {
-                let return_arg = msg.next().context("should provide next arg")?;
-                let fitered = &return_arg
-                    .chars()
-                    .filter(|c| c.is_alphabetic())
-                    .collect::<String>();
-                let parse_result = ReturnOptions::from_str(fitered);
-                let Result::Ok(parse) = parse_result else {
-                    if return_arg.ends_with(")") {
-                        break;
-                    }
-                    continue;
-                };
-
-                ret.push(parse);
-                if return_arg.ends_with(")") {
-                    break;
-                }
-            }
-            if ret.is_empty() {
-                ret.push(ReturnOptions::All)
-            }
-            continue;
-        }
-    }
-    let arg_vec = crate::utils::parse_search_args(msg, msg_count)?;
-
-    dbg!(ret);
-    dbg!(arg_vec);
-
-    Err(anyhow!("not implemented"))
+    Ok((response, state, ResponseInfo::Regular))
 }
 
 #[derive(Debug)]

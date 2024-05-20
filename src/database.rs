@@ -459,6 +459,7 @@ impl DBClient {
         &self,
         search_args: SearchArgs,
         mailbox_id: i32,
+        uid: bool,
     ) -> Result<String> {
         let stmt = Self::get_search_query(search_args, mailbox_id)?;
         //NOTE get_search_query is seperate for unit tests
