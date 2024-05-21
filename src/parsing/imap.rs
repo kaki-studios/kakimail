@@ -62,8 +62,7 @@ pub fn parse_list(list: &str) -> Result<Vec<String>, nom::Err<nom::error::Error<
 
 ///parses the search command
 ///assumes "SEARCH" is already stripped from the start
-pub fn search(input: &str) -> Result<SearchArgs, nom::Err<nom::error::Error<&str>>> {
-    dbg!(&input);
+pub fn search(input: &str) -> Result<SearchArgs, nom::Err<nom::error::Error<String>>> {
     //use alt() instead
     let return_opts_parser = separated_list1(tag(" "), alpha1::<&str, nom::error::Error<&str>>);
     let mut start_parser = delimited(tag("RETURN ("), return_opts_parser, tag(") "));
@@ -82,7 +81,8 @@ pub fn search(input: &str) -> Result<SearchArgs, nom::Err<nom::error::Error<&str
         .collect::<Vec<ReturnOptions>>();
 
     //TODO support quotes
-    let parsed_args = parse_list(args)?;
+    let parsed_args = parse_list(args)
+        .map_err(|e| e.map(|e2| nom::error::Error::new(e2.input.to_string(), e2.code)))?;
     let mut iterator = parsed_args.iter();
     let mut new_args = vec![];
     while let Some(arg) = iterator.next() {
@@ -232,10 +232,10 @@ mod tests {
     }
     #[test]
     fn test_search() {
-        search("RETURN (MIN) UNSEEN BCC test TEXT \"some text\"").ok();
-        let s =
-            search("RETURN (MIN) UNSEEN BCC test TEXT \"some text\" ON 02-Oct-2020 17:16:10 +0300")
-                .unwrap();
+        let s = search(
+            "RETURN (MIN MAX) UNSEEN BCC test TEXT \"some text\" ON 02-Oct-2020 17:16:10 +0300",
+        )
+        .unwrap();
         dbg!(&s);
         // let x = s.search_keys.iter().fold(String::new(), |mut acc, i| {
         //     let j = i.to_sql_arg();
@@ -244,7 +244,7 @@ mod tests {
         //     acc
         // });
         // dbg!(x);
-        crate::database::DBClient::get_search_query(s, 0);
+        crate::database::DBClient::get_search_query(s, 0, false);
     }
     #[test]
     fn test_list() {

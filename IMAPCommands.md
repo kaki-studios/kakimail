@@ -16,17 +16,18 @@
 - [X] delete
 - [X] rename
 - [x] subscribe
-- [x] unsubscribe
+- [X] unsubscribe
 - [X] list (barebones, need more functionality)
 - [X] namespace
 - [X] status
 - [X] append
-- [X] idle (imaplib only works for IMAP4rev1, so i can test IDLE)
+- [X] idle (imaplib only works for IMAP4rev1, so i can't test IDLE)
 ### selected state:
 - [X] close
 - [X] unselect
 - [X] expunge
 - [ ] search
+- [ ] fetch
 - [ ] store
 - [ ] copy
 - [ ] move

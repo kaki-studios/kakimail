@@ -53,8 +53,7 @@ pub(super) async fn search_or_uid(
         return Err(anyhow!("bad state"));
     };
 
-    //TODO some info might be in next command like
-    //what the fuck
+    // TODO some info might be in next command like in append
     let search_args = parsing::imap::search(args)?;
     let result = db
         .lock()
@@ -92,7 +91,6 @@ impl FromStr for ReturnOptions {
     }
 }
 
-//TODO use dates
 ///one hell of an enum!
 #[derive(Debug, Clone)]
 pub enum SearchKeys {
@@ -224,11 +222,20 @@ impl SearchKeys {
             //idk, match anything
             SearchKeys::All => ("data LIKE \"%\"".to_string(), args!().to_vec()),
             //idk if this is the right syntax
-            SearchKeys::Text(s) => ("data LIKE \"%?%\"".to_string(), args!(s).to_vec()),
-            //headers are "x: y", right? +header can contain y anywhere
-            SearchKeys::Header(x, y) => ("data LIKE \"?: %?%\"".to_string(), args!(x, y).to_vec()),
+            SearchKeys::Text(s) => (
+                "data LIKE ?".to_string(),
+                args!(format!("%{}%", s)).to_vec(),
+            ),
+            //headers are "x: y", right?
+            SearchKeys::Header(x, y) => (
+                "data LIKE ?".to_string(),
+                args!(format!("%{}: {}%", x, y)).to_vec(),
+            ),
             //whatever, same as text even though not supposed to be
-            SearchKeys::Body(s) => ("data LIKE \"%?%\"".to_owned(), args!(s).to_vec()),
+            SearchKeys::Body(s) => (
+                "data LIKE ?".to_string(),
+                args!(format!("%{}%", s)).to_vec(),
+            ),
             //the flags
             SearchKeys::Answered => (
                 "flags LIKE ?".to_owned(),
@@ -272,7 +279,15 @@ impl SearchKeys {
                 args!(IMAPFlags::Draft.to_string().replace("1", "0")).to_vec(),
             ),
             //somewhat scuffed
-            // SearchKeys::Not(s) => s.to_string().replace("LIKE", "NOT LIKE"),
+            SearchKeys::Not(s) => (
+                s.to_sql_arg()
+                    .0
+                    //witchcraft
+                    .replace("LIKE", "NOT LIKE")
+                    .replace("<", ">")
+                    .replace(">", "<"),
+                s.to_sql_arg().1,
+            ),
             //test these please
             SearchKeys::Larger(n) => ("length(data) > ?".to_owned(), args!(*n).to_vec()),
             SearchKeys::Smaller(n) => ("length(data) < ?".to_owned(), args!(*n).to_vec()),
@@ -282,11 +297,14 @@ impl SearchKeys {
                 result.1.extend(result2.1);
                 result.0.extend(" OR ".chars());
                 result.0.extend(result2.0.chars());
-                //TODO convert every othes command to use (Vec<Value, String)
                 //result1 holds the result
                 result
             }
-            //TODO header keys (to, subject, etc)
+            //TODO header keys (subject, etc)
+            SearchKeys::To(s) => (
+                "recipients LIKE ?".to_string(),
+                args!(format!("%{}%", s)).to_vec(),
+            ),
             _ => ("".to_owned(), vec![]),
         }
     }
