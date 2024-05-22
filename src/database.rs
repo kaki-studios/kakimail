@@ -8,7 +8,7 @@ use crate::{
 use anyhow::{anyhow, Context, Result};
 use chrono::FixedOffset;
 use libsql_client::{args, client::Client, Statement, Value};
-use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::mpsc::Sender;
 
 pub struct DBClient {
     db: Client,

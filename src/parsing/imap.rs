@@ -3,16 +3,18 @@
 
 use std::str::FromStr;
 
+use anyhow::anyhow;
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_until, take_while},
     character::complete::{alpha1, char, digit1, multispace1},
     multi::{separated_list0, separated_list1},
+    number::complete::le_u32,
     sequence::{delimited, tuple},
     IResult,
 };
 
-use crate::imap_op::search::{ReturnOptions, SearchKeys};
+use crate::imap_op::search::{ReturnOptions, SearchKeys, Sequence, SequenceSet};
 
 //NOTE this code has taken inspiration from: https://github.com/djc/tokio-imap/blob/main/imap-proto/src/parser/core.rs
 
@@ -202,9 +204,14 @@ pub fn mailbox(input: &str) -> IResult<&str, Mailbox> {
 
 #[cfg(test)]
 mod tests {
-    use crate::parsing::imap::{literal, mailbox, number, parse_list, quoted, Mailbox};
+    use std::str::FromStr;
 
-    use super::search;
+    use crate::{
+        imap_op::search,
+        parsing::imap::{literal, mailbox, number, parse_list, quoted, Mailbox},
+    };
+
+    use super::{search, SequenceSet};
 
     #[test]
     fn test_literal() {
@@ -233,7 +240,7 @@ mod tests {
     #[test]
     fn test_search() {
         let s = search(
-            "RETURN (MIN MAX) UNSEEN BCC test TEXT \"some text\" ON 02-Oct-2020 17:16:10 +0300",
+            "RETURN (MIN MAX) UNSEEN BCC test TEXT \"some text\" ON 02-Oct-2020 17:16:10 +0300 2,3,7:10,15:*",
         )
         .unwrap();
         dbg!(&s);
@@ -256,5 +263,17 @@ mod tests {
             result,
             parse_list("HELLO WORLD \"QUOTED ELEMENT\"").unwrap()
         )
+    }
+    #[test]
+    fn test_sequence_set() {
+        let test_str = "2,3,7:10,15:*";
+        let result = search::SequenceSet::from_str(test_str).unwrap();
+        println!("{:?}", result);
+    }
+    #[test]
+    #[should_panic]
+    fn test_bad_sequence_set() {
+        let test_str = "2,3,7:10,1s:*";
+        search::SequenceSet::from_str(test_str).unwrap();
     }
 }

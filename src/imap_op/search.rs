@@ -4,11 +4,13 @@
 //-done!
 
 use std::ops::Deref;
+use std::ops::RangeFrom;
+use std::ops::RangeInclusive;
+use std::ops::RangeToInclusive;
 use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::anyhow;
-use anyhow::Context;
 use anyhow::Ok;
 use anyhow::Result;
 use chrono::FixedOffset;
@@ -94,7 +96,7 @@ impl FromStr for ReturnOptions {
 ///one hell of an enum!
 #[derive(Debug, Clone)]
 pub enum SearchKeys {
-    SequenceSet(Vec<i64>),
+    SequenceSet(SequenceSet),
     All,
     Answered,
     Bcc(String),
@@ -201,8 +203,12 @@ impl FromStr for SearchKeys {
             "unflagged" => SearchKeys::Unflagged,
             "unkeyword" => SearchKeys::Unkeyword(IMAPFlags::from_str(&end)?),
             "unseen" => SearchKeys::Unseen,
-
-            _ => return Err(anyhow!("not implemented")),
+            //sequence set, has to be last
+            //also TODO rest of commands
+            s => {
+                let sequence_set = SequenceSet::from_str(s)?;
+                SearchKeys::SequenceSet(sequence_set)
+            }
         };
         Ok(result)
     }
@@ -300,12 +306,140 @@ impl SearchKeys {
                 //result1 holds the result
                 result
             }
-            //TODO header keys (subject, etc)
             SearchKeys::To(s) => (
                 "recipients LIKE ?".to_string(),
                 args!(format!("%{}%", s)).to_vec(),
             ),
-            _ => ("".to_owned(), vec![]),
+            SearchKeys::SequenceSet(s) => {
+                let mut final_str = String::from("(");
+                let mut final_args = vec![];
+                for (i, val) in s.sequences.iter().enumerate() {
+                    let (new_str, new_arg) = match val {
+                        Sequence::Int(i) => ("uid = ?", args!(*i).to_vec()),
+                        Sequence::RangeFull => ("1", args!().to_vec()),
+                        Sequence::RangeTo(r) => ("uid <= ?", args!(r.end).to_vec()),
+                        Sequence::RangeFrom(r) => ("uid >= ?", args!(r.start).to_vec()),
+                        Sequence::Range(r) => (
+                            "(uid <= ? AND uid >= ?)",
+                            args!(*r.end(), *r.start()).to_vec(),
+                        ),
+                    };
+                    final_str.push_str(new_str);
+                    final_args.extend(new_arg);
+                    if i != s.sequences.len() - 1 {
+                        final_str.push_str(" OR ");
+                    } else {
+                        final_str.push(')');
+                    }
+                }
+
+                (final_str, final_args)
+            }
+            SearchKeys::Bcc(s) => ("".to_owned(), args!().to_vec()),
+            SearchKeys::Before(s) => {
+                let datetime_str = s.format(parsing::DB_DATETIME_FMT).to_string();
+                //apparently this is supposed to work
+                ("date < ?".to_string(), args!(datetime_str).to_vec())
+            }
+            SearchKeys::On(s) => {
+                let datetime_str = s.format(parsing::DB_DATETIME_FMT).to_string();
+                ("date = ?".to_string(), args!(datetime_str).to_vec())
+            }
+            SearchKeys::Since(s) => {
+                let datetime_str = s.format(parsing::DB_DATETIME_FMT).to_string();
+                ("date > ?".to_string(), args!(datetime_str).to_vec())
+            }
+            //this is not the same as Before, this requires that the messages Date field is less
+            //than the specified date
+            SearchKeys::SentBefore(s) => ("".to_owned(), args!().to_vec()),
+            SearchKeys::SentSince(s) => ("".to_owned(), args!().to_vec()),
+            SearchKeys::SentOn(s) => ("".to_owned(), args!().to_vec()),
+            //normal
+            SearchKeys::Subject(s) => ("".to_owned(), args!().to_vec()),
+            SearchKeys::Uid(s) => ("".to_owned(), args!().to_vec()),
+            SearchKeys::Unkeyword(s) => ("".to_owned(), args!().to_vec()),
+            SearchKeys::Cc(s) => ("".to_owned(), args!().to_vec()),
+            SearchKeys::From(s) => ("".to_owned(), args!().to_vec()),
+            SearchKeys::Keyword(s) => ("".to_owned(), args!().to_vec()),
+            // _ => ("".to_owned(), vec![]),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Sequence {
+    Int(u32),
+    RangeTo(RangeToInclusive<u32>),
+    RangeFrom(RangeFrom<u32>),
+    Range(RangeInclusive<u32>),
+    RangeFull,
+}
+
+impl FromStr for Sequence {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
+        match s.split_once(":") {
+            Some(tuple) => match tuple {
+                ("*", "*") => Ok(Sequence::RangeFull),
+                ("*", num_str) => {
+                    let num = num_str.parse::<u32>()?;
+                    Ok(Sequence::RangeTo(..=num))
+                }
+                (num_str, "*") => {
+                    let num = num_str.parse::<u32>()?;
+                    Ok(Sequence::RangeFrom(num..))
+                }
+                (num_str1, num_str2) => {
+                    let num1 = num_str1.parse::<u32>()?;
+                    let num2 = num_str2.parse::<u32>()?;
+                    Ok(Sequence::Range(num1..=num2))
+                }
+            },
+            None => {
+                let num = s.parse::<u32>()?;
+                Ok(Sequence::Int(num))
+            }
+        }
+    }
+}
+
+impl Sequence {
+    pub fn contains(&self, num: u32) -> bool {
+        match self {
+            Sequence::Int(n) => &num == n,
+            Sequence::RangeTo(r) => r.contains(&num),
+            Sequence::RangeFrom(r) => r.contains(&num),
+            Sequence::Range(r) => r.contains(&num),
+            Sequence::RangeFull => true,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SequenceSet {
+    pub sequences: Vec<Sequence>,
+}
+
+impl SequenceSet {
+    pub fn contains(&self, num: u32) -> bool {
+        for i in self.sequences.iter() {
+            if i.contains(num) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+impl FromStr for SequenceSet {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
+        Ok(SequenceSet {
+            sequences: s
+                .split(",")
+                .map(Sequence::from_str)
+                .collect::<Result<Vec<Sequence>>>()?,
+        })
     }
 }
