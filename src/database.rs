@@ -431,16 +431,15 @@ impl DBClient {
             .filter(|s| !s.is_empty())
             .collect::<Vec<&str>>()
             .join(", ");
-        let (raw_str, values) = db_args
-            .iter()
-            .filter(|(i, _)| !i.is_empty())
-            //smart, we need return_string as the first value and mailbox_id as the second value
-            .fold((String::new(), args!().to_vec()), |mut acc, n| {
+        let (raw_str, values) = db_args.iter().filter(|(i, _)| !i.is_empty()).fold(
+            (String::new(), args!().to_vec()),
+            |mut acc, n| {
                 acc.1.extend(n.1.clone());
                 acc.0.extend(n.0.chars());
                 acc.0.extend(" AND ".chars());
                 acc
-            });
+            },
+        );
         //dirty
         let raw_str = raw_str
             .strip_suffix(" AND ")
@@ -451,7 +450,23 @@ impl DBClient {
             values,
             raw_str
         );
-
+        //TODO if search_args has some search_keys that need access to message sequence numbers, we
+        //need to use ROW_NUMBER() for that. we need to thus change the string to something like
+        //this:
+        //`
+        // WITH NumberedRows AS (
+        //     SELECT
+        //         {},
+        //         ROW_NUMBER() OVER (ORDER BY uid) AS row_num
+        //     FROM
+        //         mail
+        // )
+        // SELECT
+        //     *
+        // FROM
+        //     NumberedRows
+        // WHERE mailbox_id = {}
+        //`
         let string = format!(
             "SELECT {} FROM mail WHERE mailbox_id = {} AND ",
             return_string, mailbox_id

@@ -123,7 +123,7 @@ pub enum SearchKeys {
     Subject(String),
     Text(String),
     To(String),
-    Uid(String),
+    Uid(SequenceSet),
     Unanswered,
     Undeleted,
     Undraft,
@@ -196,7 +196,7 @@ impl FromStr for SearchKeys {
             "subject" => SearchKeys::Subject(end),
             "text" => SearchKeys::Text(end),
             "to" => SearchKeys::To(end),
-            "uid" => SearchKeys::Uid(end),
+            "uid" => SearchKeys::Uid(SequenceSet::from_str(&end)?),
             "unanswered" => SearchKeys::Unanswered,
             "undeleted" => SearchKeys::Undeleted,
             "undraft" => SearchKeys::Undraft,
@@ -311,6 +311,7 @@ impl SearchKeys {
                 args!(format!("%{}%", s)).to_vec(),
             ),
             SearchKeys::SequenceSet(s) => {
+                //TODO this is wrong. should be operating on message sequence numbers and not uids
                 let mut final_str = String::from("(");
                 let mut final_args = vec![];
                 for (i, val) in s.sequences.iter().enumerate() {
@@ -354,9 +355,34 @@ impl SearchKeys {
             SearchKeys::SentBefore(s) => ("".to_owned(), args!().to_vec()),
             SearchKeys::SentSince(s) => ("".to_owned(), args!().to_vec()),
             SearchKeys::SentOn(s) => ("".to_owned(), args!().to_vec()),
-            //normal
+
+            SearchKeys::Uid(s) => {
+                let mut final_str = String::from("(");
+                let mut final_args = vec![];
+                for (i, val) in s.sequences.iter().enumerate() {
+                    let (new_str, new_arg) = match val {
+                        Sequence::Int(i) => ("uid = ?", args!(*i).to_vec()),
+                        Sequence::RangeFull => ("1", args!().to_vec()),
+                        Sequence::RangeTo(r) => ("uid <= ?", args!(r.end).to_vec()),
+                        Sequence::RangeFrom(r) => ("uid >= ?", args!(r.start).to_vec()),
+                        Sequence::Range(r) => (
+                            "(uid <= ? AND uid >= ?)",
+                            args!(*r.end(), *r.start()).to_vec(),
+                        ),
+                    };
+                    final_str.push_str(new_str);
+                    final_args.extend(new_arg);
+                    if i != s.sequences.len() - 1 {
+                        final_str.push_str(" OR ");
+                    } else {
+                        final_str.push(')');
+                    }
+                }
+
+                (final_str, final_args)
+            }
+            //TODO
             SearchKeys::Subject(s) => ("".to_owned(), args!().to_vec()),
-            SearchKeys::Uid(s) => ("".to_owned(), args!().to_vec()),
             SearchKeys::Unkeyword(s) => ("".to_owned(), args!().to_vec()),
             SearchKeys::Cc(s) => ("".to_owned(), args!().to_vec()),
             SearchKeys::From(s) => ("".to_owned(), args!().to_vec()),

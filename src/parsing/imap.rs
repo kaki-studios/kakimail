@@ -82,8 +82,8 @@ pub fn search(input: &str) -> Result<SearchArgs, nom::Err<nom::error::Error<Stri
         .flatten()
         .collect::<Vec<ReturnOptions>>();
 
-    //TODO support quotes
     let parsed_args = parse_list(args)
+        //wtf is this
         .map_err(|e| e.map(|e2| nom::error::Error::new(e2.input.to_string(), e2.code)))?;
     let mut iterator = parsed_args.iter();
     let mut new_args = vec![];
