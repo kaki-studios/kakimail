@@ -134,6 +134,7 @@ pub enum SearchKeys {
 
 impl FromStr for SearchKeys {
     type Err = anyhow::Error;
+    ///has to be a string produced by parsing/imap.rs search()
     fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
         let (start, end) = s.split_once(" ").unwrap_or((s, ""));
         let end = end.to_string();
@@ -204,7 +205,6 @@ impl FromStr for SearchKeys {
             "unkeyword" => SearchKeys::Unkeyword(IMAPFlags::from_str(&end)?),
             "unseen" => SearchKeys::Unseen,
             //sequence set, has to be last
-            //also TODO rest of commands
             s => {
                 let sequence_set = SequenceSet::from_str(s)?;
                 SearchKeys::SequenceSet(sequence_set)
@@ -217,12 +217,6 @@ impl FromStr for SearchKeys {
 impl SearchKeys {
     pub fn to_sql_arg(&self) -> (String, Vec<Value>) {
         //NOTE using String instead of &'static str because of SearchKeys::Or(x)
-        //TODO implement this for SearchArgs insead of SearchKeys because then you can make it
-        //conditional based on ReturnOptions
-        //
-        //example: some function f on SearchArgs that calls
-        //SearchKeys::to_sql_arg(&self, return_opts: ReturnOptions) -> (String, Vec<Value>)
-        //for each item in SearchArgs.search_keys
 
         match self {
             //idk, match anything
@@ -232,10 +226,11 @@ impl SearchKeys {
                 "data LIKE ?".to_string(),
                 args!(format!("%{}%", s)).to_vec(),
             ),
-            //headers are "x: y", right?
             SearchKeys::Header(x, y) => (
                 "data LIKE ?".to_string(),
-                args!(format!("%{}: {}%", x, y)).to_vec(),
+                //a bit too loose matching, the second % can match crlf even though it's not
+                //supposed to
+                args!(format!("%{}:%{}%", x, y)).to_vec(),
             ),
             //whatever, same as text even though not supposed to be
             SearchKeys::Body(s) => (
@@ -307,8 +302,8 @@ impl SearchKeys {
                 result
             }
             SearchKeys::To(s) => (
-                "recipients LIKE ?".to_string(),
-                args!(format!("%{}%", s)).to_vec(),
+                "data LIKE ?".to_string(),
+                args!(format!("To:%{}%", s)).to_vec(),
             ),
             SearchKeys::SequenceSet(s) => {
                 //TODO this is wrong. should be operating on message sequence numbers and not uids
@@ -336,7 +331,10 @@ impl SearchKeys {
 
                 (final_str, final_args)
             }
-            SearchKeys::Bcc(s) => ("".to_owned(), args!().to_vec()),
+            SearchKeys::Bcc(s) => (
+                "data LIKE ?".to_string(),
+                args!(format!("Bcc:%{}%", s)).to_vec(),
+            ),
             SearchKeys::Before(s) => {
                 let datetime_str = s.format(parsing::DB_DATETIME_FMT).to_string();
                 //apparently this is supposed to work
@@ -352,6 +350,7 @@ impl SearchKeys {
             }
             //this is not the same as Before, this requires that the messages Date field is less
             //than the specified date
+            //TODO: these are the only ones left
             SearchKeys::SentBefore(s) => ("".to_owned(), args!().to_vec()),
             SearchKeys::SentSince(s) => ("".to_owned(), args!().to_vec()),
             SearchKeys::SentOn(s) => ("".to_owned(), args!().to_vec()),
@@ -381,13 +380,23 @@ impl SearchKeys {
 
                 (final_str, final_args)
             }
-            //TODO
-            SearchKeys::Subject(s) => ("".to_owned(), args!().to_vec()),
-            SearchKeys::Unkeyword(s) => ("".to_owned(), args!().to_vec()),
-            SearchKeys::Cc(s) => ("".to_owned(), args!().to_vec()),
-            SearchKeys::From(s) => ("".to_owned(), args!().to_vec()),
-            SearchKeys::Keyword(s) => ("".to_owned(), args!().to_vec()),
-            // _ => ("".to_owned(), vec![]),
+            SearchKeys::Subject(s) => (
+                "data LIKE ?".to_string(),
+                args!(format!("Subject:%{}%", s)).to_vec(),
+            ),
+            SearchKeys::Cc(s) => (
+                "data LIKE ?".to_string(),
+                args!(format!("Cc:%{}%", s)).to_vec(),
+            ),
+            SearchKeys::From(s) => (
+                "data LIKE ?".to_string(),
+                args!(format!("From:%{}%", s)).to_vec(),
+            ),
+            SearchKeys::Keyword(s) => ("flags LIKE ?".to_owned(), args!(s.to_string()).to_vec()),
+            SearchKeys::Unkeyword(s) => (
+                "flags LIKE ?".to_owned(),
+                args!(s.to_string().replace("1", "0")).to_vec(),
+            ),
         }
     }
 }
