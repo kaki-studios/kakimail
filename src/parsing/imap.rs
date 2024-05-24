@@ -145,7 +145,7 @@ pub fn search(input: &str) -> Result<SearchArgs, nom::Err<nom::error::Error<Stri
     })
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SearchArgs {
     pub return_opts: Vec<ReturnOptions>,
     pub search_keys: Vec<SearchKeys>,

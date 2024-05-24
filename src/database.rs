@@ -60,7 +60,7 @@ impl DBClient {
 
         //MAIL TABLE
         db.batch([
-            "CREATE TABLE IF NOT EXISTS mail (uid integer unique not null, date text, sender text, recipients text, data text, 
+            "CREATE TABLE IF NOT EXISTS mail (uid integer unique not null, seqnum integer not null, date text, sender text, recipients text, data text, 
              mailbox_id integer not null, flags varchar(5), FOREIGN KEY(mailbox_id) REFERENCES mailboxes(id), PRIMARY KEY(uid));",
             //                                  varchar(5) because we have 5 flags
             "CREATE INDEX IF NOT EXISTS mail_date ON mail(date);",
@@ -77,10 +77,10 @@ impl DBClient {
     pub async fn biggest_uid(&self) -> Result<i64> {
         let count: i64 = i64::try_from(
             self.db
-                .execute(Statement::new("SELECT uid FROM mail ORDER BY uid ASC"))
+                .execute(Statement::new("SELECT MAX(uid) FROM mail"))
                 .await?
                 .rows
-                .last()
+                .first()
                 .context("No rows returned from SELECT uid query")?
                 .values
                 .first()
@@ -88,6 +88,25 @@ impl DBClient {
         )
         .unwrap_or(0);
         Ok(count)
+    }
+
+    pub async fn biggest_seqnum(&self, mailbox_id: i32) -> Result<i64> {
+        let seqnum = i64::try_from(
+            self.db
+                .execute(Statement::with_args(
+                    "SELECT MAX(seqnum) FROM mail WHERE mailbox_id = ?",
+                    args!(mailbox_id),
+                ))
+                .await?
+                .rows
+                .first()
+                .context("No rows returned")?
+                .values
+                .first()
+                .context("No values returned")?,
+        )
+        .unwrap_or(0);
+        Ok(seqnum)
     }
 
     /// Replicates received mail to the database
@@ -112,13 +131,15 @@ impl DBClient {
             //so that it will become 0 in the db
             .unwrap_or(-1)
             + 1;
+        let next_seqnum = self.biggest_seqnum(mailbox_id).await.unwrap_or(-1) + 1;
         dbg!(&next_uid);
 
         self.db
             .execute(Statement::with_args(
-                "INSERT INTO mail VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO mail VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 libsql_client::args!(
                     next_uid as i32,
+                    next_seqnum as i32,
                     time,
                     mail.from,
                     mail.to.join(", "),
@@ -134,6 +155,7 @@ impl DBClient {
     /// Cleans up old mail
     #[allow(unused)]
     pub async fn delete_old_mail(&self) -> Result<()> {
+        //NOTE this will mess up the seqnums
         let now = chrono::offset::Utc::now();
         let a_week_ago = now - chrono::Duration::days(7);
         let a_week_ago = &a_week_ago.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
@@ -180,28 +202,18 @@ impl DBClient {
             return Err(anyhow!("no such mailbox: {}", mailbox_name));
         }
         //we need to create the inbox mailbox bc it must exist
-        self.db
+        let result = self
+            .db
             .execute(Statement::with_args(
                 "INSERT INTO mailboxes(name, user_id, flags) VALUES(?, ?, 0)",
                 libsql_client::args!(mailbox_name, user_id),
             ))
             .await?;
-        let result = self
-            .db
-            .execute(Statement::new("select last_insert_rowid()"))
-            .await?;
-        let result = result
-            .rows
-            .first()
-            .ok_or(anyhow!("no rows"))?
-            .values
-            .first()
-            .ok_or(anyhow!("no values"))?;
-        if let Value::Integer { value: x } = result {
-            return Ok(*x as i32);
+        if let Some(x) = result.last_insert_rowid {
+            Ok(x as i32)
+        } else {
+            Err(anyhow!("no such mailbox"))
         }
-
-        return Err(anyhow!("No such mailbox"));
     }
     async fn get_mailbox_id_no_inbox(&self, user_id: i32, mailbox_name: &str) -> Result<i32> {
         let result = self
@@ -337,12 +349,12 @@ impl DBClient {
         let deleted = IMAPFlags::Deleted.to_string();
         let statement = if let Some((start, end)) = uid {
             Statement::with_args(
-                "DELETE FROM mail WHERE uid BETWEEN ? AND ? AND flags like ? RETURNING _rowid_",
+                "DELETE FROM mail WHERE uid BETWEEN ? AND ? AND flags like ? RETURNING seqnum",
                 args!(start, end, deleted),
             )
         } else {
             Statement::with_args(
-                "DELETE FROM mail WHERE mailbox_id = ? AND flags like ? RETURNING _rowid_",
+                "DELETE FROM mail WHERE mailbox_id = ? AND flags like ? RETURNING seqnum",
                 args!(mailbox_id, deleted),
             )
         };
@@ -357,6 +369,14 @@ impl DBClient {
             .iter()
             .flat_map(|val| i32::try_from(*val))
             .collect::<Vec<_>>();
+        for seqnum in &results2 {
+            self.db
+                .execute(Statement::with_args(
+                    "UPDATE mail SET seqnum = seqnum - 1 WHERE seqnum > ?",
+                    args!(*seqnum),
+                ))
+                .await?;
+        }
         let sequence_nums = results2
             .iter()
             .enumerate()
@@ -405,32 +425,13 @@ impl DBClient {
     pub fn get_search_query(
         search_args: SearchArgs,
         mailbox_id: i32,
-        _uid: bool,
+        uid: bool,
     ) -> Result<Statement> {
         let db_args: Vec<_> = search_args
             .search_keys
             .iter()
-            .map(SearchKeys::to_sql_arg)
+            .map(|i| SearchKeys::to_sql_arg(i, uid))
             .collect();
-        let return_string = search_args
-            .return_opts
-            .iter()
-            .map(|i| {
-                match i {
-                    //TODO if !uid, use column id instead (message sequence number, check rfc)
-                    ReturnOptions::Min => "MIN(uid) as min_uid",
-
-                    ReturnOptions::Max => "MAX(uid) as max_uid",
-                    ReturnOptions::All => "uid",
-                    ReturnOptions::Count => "COUNT(uid) as count_uid",
-                    //TODO save should save the result in a variable called $
-                    ReturnOptions::Save => "",
-                }
-            })
-            //dirty, filters out ReturnOptions::Save bc it's not implemented
-            .filter(|s| !s.is_empty())
-            .collect::<Vec<&str>>()
-            .join(", ");
         let (raw_str, values) = db_args.iter().filter(|(i, _)| !i.is_empty()).fold(
             (String::new(), args!().to_vec()),
             |mut acc, n| {
@@ -440,37 +441,27 @@ impl DBClient {
                 acc
             },
         );
-        //dirty
-        let raw_str = raw_str
+        let requirements = raw_str
+            //dirty
             .strip_suffix(" AND ")
             .context("should always happen")?;
         tracing::debug!(
             "db_args: {:?}, values: {:?}, raw_str: {:?}",
             db_args,
             values,
-            raw_str
+            requirements
         );
         //TODO if search_args has some search_keys that need access to message sequence numbers, we
         //need to use ROW_NUMBER() for that. we need to thus change the string to something like
         //this:
         //`
-        // WITH NumberedRows AS (
-        //     SELECT
-        //         {},
-        //         ROW_NUMBER() OVER (ORDER BY uid) AS row_num
-        //     FROM
-        //         mail
-        // )
-        // SELECT
-        //     *
-        // FROM
-        //     NumberedRows
-        // WHERE mailbox_id = {}
         //`
+
         let string = format!(
-            "SELECT {} FROM mail WHERE mailbox_id = {} AND ",
-            return_string, mailbox_id
-        ) + &raw_str;
+            //test this
+            "SELECT uid, seqnum FROM mail WHERE mailbox_id = {} AND {}",
+            mailbox_id, requirements
+        );
         println!("{}\n{:?}", string, values);
         let stmt = Statement::with_args(string, &values);
         println!("{}", stmt.to_string());
@@ -482,20 +473,64 @@ impl DBClient {
         mailbox_id: i32,
         uid: bool,
     ) -> Result<String> {
-        let stmt = Self::get_search_query(search_args, mailbox_id, uid)?;
+        let stmt = Self::get_search_query(search_args.clone(), mailbox_id, uid)?;
         //NOTE get_search_query is seperate for unit tests
         let result = self.db.execute(stmt).await?;
         //TODO right string formatting
-        let test_str = result
+        let str_result = result
             .rows
             .iter()
             .map(|s| s.values.clone())
-            .flatten()
-            .map(|s| s.to_string())
+            .map(|s| {
+                s.iter()
+                    .filter_map(|i| {
+                        if let Value::Integer { value: x } = i {
+                            Some(*x as i32)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<i32>>()
+            })
+            //i[0] stores the uid, i[1] stores row num
+            .map(|i| if uid { i[0] } else { i[1] })
+            .collect::<Vec<i32>>();
+
+        //TODO don't do it like this since it won't work if return_opts includes ReturnOptions::All
+
+        let fmt_result = search_args
+            .return_opts
+            .iter()
+            .filter_map(|ret_op| match ret_op {
+                ReturnOptions::Min => {
+                    if let Some(min) = str_result.iter().min() {
+                        Some(format!("MIN {}", min))
+                    } else {
+                        None
+                    }
+                }
+                ReturnOptions::Max => {
+                    if let Some(max) = str_result.iter().max() {
+                        Some(format!("MAX {}", max))
+                    } else {
+                        None
+                    }
+                }
+                ReturnOptions::All => Some(format!(
+                    "ALL {}",
+                    str_result
+                        .iter()
+                        .map(i32::to_string)
+                        .collect::<Vec<String>>()
+                        .join(",")
+                )),
+                ReturnOptions::Count => Some(format!("COUNT {}", str_result.len())),
+                ReturnOptions::Save => Some("".to_owned()),
+            })
             .collect::<Vec<String>>()
             .join(" ");
-
-        Err(anyhow!("not implemented"))
+        println!("test_result: {}", fmt_result);
+        Ok(fmt_result)
     }
 }
 

@@ -57,20 +57,22 @@ pub(super) async fn search_or_uid(
 
     // TODO some info might be in next command like in append
     let search_args = parsing::imap::search(args)?;
-    let result = db
+    let db_result = db
         .lock()
         .await
         .exec_search_query(search_args, selected_state.mailbox_id, uid)
         .await?;
     let response = vec![
-        result.as_bytes().to_vec(),
+        format!("* ESEARCH (TAG \"{}\") {}\r\n", tag, db_result)
+            .as_bytes()
+            .to_vec(),
         format!("{} OK SEARCH completed\r\n", tag).into(),
     ];
 
     Ok((response, state, ResponseInfo::Regular))
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ReturnOptions {
     Min,
     Max,
@@ -215,7 +217,7 @@ impl FromStr for SearchKeys {
 }
 
 impl SearchKeys {
-    pub fn to_sql_arg(&self) -> (String, Vec<Value>) {
+    pub fn to_sql_arg(&self, uid: bool) -> (String, Vec<Value>) {
         //NOTE using String instead of &'static str because of SearchKeys::Or(x)
 
         match self {
@@ -281,20 +283,20 @@ impl SearchKeys {
             ),
             //somewhat scuffed
             SearchKeys::Not(s) => (
-                s.to_sql_arg()
+                s.to_sql_arg(uid)
                     .0
                     //witchcraft
                     .replace("LIKE", "NOT LIKE")
                     .replace("<", ">")
                     .replace(">", "<"),
-                s.to_sql_arg().1,
+                s.to_sql_arg(uid).1,
             ),
             //test these please
             SearchKeys::Larger(n) => ("length(data) > ?".to_owned(), args!(*n).to_vec()),
             SearchKeys::Smaller(n) => ("length(data) < ?".to_owned(), args!(*n).to_vec()),
             SearchKeys::Or(b) => {
                 let keys = b.deref();
-                let (mut result, result2) = (keys.0.to_sql_arg(), keys.1.to_sql_arg());
+                let (mut result, result2) = (keys.0.to_sql_arg(uid), keys.1.to_sql_arg(uid));
                 result.1.extend(result2.1);
                 result.0.extend(" OR ".chars());
                 result.0.extend(result2.0.chars());
@@ -311,12 +313,13 @@ impl SearchKeys {
                 let mut final_args = vec![];
                 for (i, val) in s.sequences.iter().enumerate() {
                     let (new_str, new_arg) = match val {
-                        Sequence::Int(i) => ("uid = ?", args!(*i).to_vec()),
+                        Sequence::Int(i) => ("row_num = ?", args!(*i).to_vec()),
+                        //idk
                         Sequence::RangeFull => ("1", args!().to_vec()),
-                        Sequence::RangeTo(r) => ("uid <= ?", args!(r.end).to_vec()),
-                        Sequence::RangeFrom(r) => ("uid >= ?", args!(r.start).to_vec()),
+                        Sequence::RangeTo(r) => ("row_num <= ?", args!(r.end).to_vec()),
+                        Sequence::RangeFrom(r) => ("row_num >= ?", args!(r.start).to_vec()),
                         Sequence::Range(r) => (
-                            "(uid <= ? AND uid >= ?)",
+                            "(row_num <= ? AND row_num >= ?)",
                             args!(*r.end(), *r.start()).to_vec(),
                         ),
                     };
@@ -341,6 +344,7 @@ impl SearchKeys {
                 ("date < ?".to_string(), args!(datetime_str).to_vec())
             }
             SearchKeys::On(s) => {
+                //FIX should disregard time and timezone (only date should matter)
                 let datetime_str = s.format(parsing::DB_DATETIME_FMT).to_string();
                 ("date = ?".to_string(), args!(datetime_str).to_vec())
             }
