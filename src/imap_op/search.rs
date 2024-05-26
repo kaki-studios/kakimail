@@ -116,7 +116,6 @@ pub enum SearchKeys {
     On(chrono::DateTime<FixedOffset>),
     Or(Box<(SearchKeys, SearchKeys)>),
     Seen,
-    //TODO change to DateTime
     SentBefore(chrono::DateTime<FixedOffset>),
     SentOn(chrono::DateTime<FixedOffset>),
     SentSince(chrono::DateTime<FixedOffset>),
@@ -308,7 +307,6 @@ impl SearchKeys {
                 args!(format!("To:%{}%", s)).to_vec(),
             ),
             SearchKeys::SequenceSet(s) => {
-                //TODO this is wrong. should be operating on message sequence numbers and not uids
                 let mut final_str = String::from("(");
                 let mut final_args = vec![];
                 for (i, val) in s.sequences.iter().enumerate() {
@@ -462,12 +460,7 @@ pub struct SequenceSet {
 
 impl SequenceSet {
     pub fn contains(&self, num: u32) -> bool {
-        for i in self.sequences.iter() {
-            if i.contains(num) {
-                return true;
-            }
-        }
-        false
+        self.sequences.iter().any(|i| i.contains(num))
     }
 }
 

@@ -74,24 +74,32 @@ impl DBClient {
             })?;
         Ok(Self { db, changes: tx })
     }
-    pub async fn biggest_uid(&self) -> Result<i64> {
-        let count: i64 = i64::try_from(
+    pub async fn next_uid(&self) -> i64 {
+        self.biggest_uid_inner().await.map(|i| i + 1).unwrap_or(1)
+    }
+    async fn biggest_uid_inner(&self) -> Result<i64> {
+        i64::try_from(
             self.db
                 .execute(Statement::new("SELECT MAX(uid) FROM mail"))
                 .await?
                 .rows
                 .first()
-                .context("No rows returned from SELECT uid query")?
+                .context("no rows")?
                 .values
                 .first()
-                .context("No values returned from a SELECT uid query")?,
+                .context("no values")?,
         )
-        .unwrap_or(0);
-        Ok(count)
+        .map_err(|_| anyhow!("couln't parse"))
     }
 
-    pub async fn biggest_seqnum(&self, mailbox_id: i32) -> Result<i64> {
-        let seqnum = i64::try_from(
+    pub async fn next_seqnum(&self, mailbox_id: i32) -> i64 {
+        self.biggest_seqnum_inner(mailbox_id)
+            .await
+            .map(|i| i + 1)
+            .unwrap_or(1)
+    }
+    async fn biggest_seqnum_inner(&self, mailbox_id: i32) -> Result<i64> {
+        i64::try_from(
             self.db
                 .execute(Statement::with_args(
                     "SELECT MAX(seqnum) FROM mail WHERE mailbox_id = ?",
@@ -105,8 +113,7 @@ impl DBClient {
                 .first()
                 .context("No values returned")?,
         )
-        .unwrap_or(0);
-        Ok(seqnum)
+        .map_err(|_| anyhow!("couldn't parse"))
     }
 
     /// Replicates received mail to the database
@@ -124,15 +131,8 @@ impl DBClient {
                 .format(crate::parsing::DB_DATETIME_FMT)
                 .to_string()
         };
-        let next_uid = self
-            .biggest_uid()
-            .await
-            .map_err(|e| tracing::info!("first mail, no previous mail: {:?}", e))
-            //so that it will become 0 in the db
-            .unwrap_or(-1)
-            + 1;
-        let next_seqnum = self.biggest_seqnum(mailbox_id).await.unwrap_or(-1) + 1;
-        dbg!(&next_uid);
+        let next_uid = self.next_uid().await;
+        let next_seqnum = self.next_seqnum(mailbox_id).await;
 
         self.db
             .execute(Statement::with_args(
@@ -244,7 +244,7 @@ impl DBClient {
         let values = self
             .db
             .execute(Statement::with_args(
-                "SELECT _rowid_, password FROM users WHERE name = ?",
+                "SELECT id, password FROM users WHERE name = ?",
                 libsql_client::args!(username),
             ))
             .await
@@ -267,7 +267,7 @@ impl DBClient {
         let values = &self
             .db
             .execute(Statement::with_args(
-                "SELECT _rowid_ from users WHERE name = ?",
+                "SELECT id from users WHERE name = ?",
                 libsql_client::args!(username),
             ))
             .await
@@ -451,16 +451,12 @@ impl DBClient {
             values,
             requirements
         );
-        //TODO if search_args has some search_keys that need access to message sequence numbers, we
-        //need to use ROW_NUMBER() for that. we need to thus change the string to something like
-        //this:
-        //`
-        //`
+        let select = if uid { "uid" } else { "seqnum" };
 
         let string = format!(
             //test this
-            "SELECT uid, seqnum FROM mail WHERE mailbox_id = {} AND {}",
-            mailbox_id, requirements
+            "SELECT {} FROM mail WHERE mailbox_id = {} AND {}",
+            select, mailbox_id, requirements
         );
         println!("{}\n{:?}", string, values);
         let stmt = Statement::with_args(string, &values);
@@ -476,12 +472,11 @@ impl DBClient {
         let stmt = Self::get_search_query(search_args.clone(), mailbox_id, uid)?;
         //NOTE get_search_query is seperate for unit tests
         let result = self.db.execute(stmt).await?;
-        //TODO right string formatting
         let str_result = result
             .rows
             .iter()
             .map(|s| s.values.clone())
-            .map(|s| {
+            .flat_map(|s| {
                 s.iter()
                     .filter_map(|i| {
                         if let Value::Integer { value: x } = i {
@@ -492,11 +487,7 @@ impl DBClient {
                     })
                     .collect::<Vec<i32>>()
             })
-            //i[0] stores the uid, i[1] stores row num
-            .map(|i| if uid { i[0] } else { i[1] })
             .collect::<Vec<i32>>();
-
-        //TODO don't do it like this since it won't work if return_opts includes ReturnOptions::All
 
         let fmt_result = search_args
             .return_opts

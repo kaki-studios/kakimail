@@ -88,7 +88,6 @@ pub fn search(input: &str) -> Result<SearchArgs, nom::Err<nom::error::Error<Stri
     let mut iterator = parsed_args.iter();
     let mut new_args = vec![];
     while let Some(arg) = iterator.next() {
-        //TODO support other args
         match arg.to_lowercase().as_str() {
             "all" | "answered" | "deleted" | "draft" | "flagged" | "seen" | "unanswered"
             | "undeleted" | "undraft" | "unflagged" | "unseen" => new_args.push(arg.to_string()),
@@ -104,6 +103,7 @@ pub fn search(input: &str) -> Result<SearchArgs, nom::Err<nom::error::Error<Stri
             "before" | "on" | "sentbefore" | "senton" | "sentsince" | "since" => {
                 //FIX spaghetti code
                 //remember that the time format contains 2 spaces
+
                 if let Some(x) = iterator.next() {
                     if let Some(y) = iterator.next() {
                         if let Some(z) = iterator.next() {

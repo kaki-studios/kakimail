@@ -74,7 +74,7 @@ pub(super) async fn select_or_examine(
         .context("mail_count failed")?;
     let count_string = format!("* {} EXISTS\r\n", count).as_bytes().to_vec();
 
-    let expected_uid = db.biggest_uid().await.unwrap_or(-1) + 1;
+    let expected_uid = db.next_uid().await;
     let expected_uid_string = format!("* OK [UIDNEXT {}]\r\n", expected_uid)
         .as_bytes()
         .to_vec();

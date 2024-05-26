@@ -36,7 +36,7 @@ impl IMAPOp for Append {
             let mut chars = arg.chars();
             match chars.next().unwrap_or(' ') {
                 '(' => {
-                    //TODO this shouldn't work
+                    // TODO this might not work
                     flags_raw = Some(arg);
                 }
                 '{' => {
@@ -45,7 +45,6 @@ impl IMAPOp for Append {
                     //this is the last arg, we should break
                 }
                 '"' => {
-                    //TODO support timezones (idk why it doesn't work)
                     let start = chars.collect::<String>();
 
                     let mut stop_next = false;
@@ -96,7 +95,7 @@ impl IMAPOp for Append {
                 .context("should begin with (")?
                 .strip_suffix(")")
                 .context("should end with )")?;
-            //the flags SHOULD be set in the resulting message...
+            //the flags SHOULD be set in the stored message...
             //TODO
         }
         if let Some(arg) = datetime_raw {
@@ -139,7 +138,7 @@ impl IMAPOp for Append {
             "{} OK [APPENDUID {} {}] APPEND completed\r\n",
             tag,
             seconds,
-            db.lock().await.biggest_uid().await.unwrap_or(0)
+            db.lock().await.next_uid().await
         );
         Ok((vec![resp.as_bytes().to_vec()], state, ResponseInfo::Regular))
     }

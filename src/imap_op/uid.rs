@@ -15,13 +15,11 @@ impl IMAPOp for Uid {
         crate::imap::IMAPState,
         crate::imap::ResponseInfo,
     )> {
-        let mut msg = args.split_whitespace();
-        match msg.next().context("")? {
+        let (cmd, rest) = args.split_once(" ").context("should be parseable")?;
+        match cmd {
             //TODO copy, move, fetch, store
-            "expunge" => {
-                let new_args = msg.collect::<Vec<&str>>().join(" ");
-                super::expunge::expunge_or_uid(tag, &new_args, state, db, true).await
-            }
+            "expunge" => super::expunge::expunge_or_uid(tag, rest, state, db, true).await,
+            "search" => super::search::search_or_uid(tag, rest, state, db, true).await,
             x => Err(anyhow!("uid command unknown: {:?}", x)),
         }
     }

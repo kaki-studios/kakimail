@@ -39,7 +39,7 @@ impl IMAPOp for Status {
                     result.push(format!("MESSAGES {}", msg_count).as_bytes().to_vec());
                 }
                 "UIDNEXT" => {
-                    let nextuid = db.biggest_uid().await.unwrap_or(-1) + 1;
+                    let nextuid = db.next_uid().await;
                     result.push(format!("UIDNEXT {}", nextuid).as_bytes().to_vec());
                 }
                 "UNSEEN" => {

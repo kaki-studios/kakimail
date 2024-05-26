@@ -212,7 +212,7 @@ impl SMTPStateMachine {
                         let result = db.lock().await.check_user(&usrname, &password).await;
 
                         if let Some(_a) = result {
-                            //TODO _a should be stored to verify that the sender is actually the
+                            //TODO _a should be checked when sending to verify that the sender is actually the
                             //correct person, currently you can send emails on others behalf
                             //because of this
 
