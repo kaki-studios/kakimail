@@ -311,13 +311,13 @@ impl SearchKeys {
                 let mut final_args = vec![];
                 for (i, val) in s.sequences.iter().enumerate() {
                     let (new_str, new_arg) = match val {
-                        Sequence::Int(i) => ("row_num = ?", args!(*i).to_vec()),
+                        Sequence::Int(i) => ("seqnum = ?", args!(*i).to_vec()),
                         //idk
                         Sequence::RangeFull => ("1", args!().to_vec()),
-                        Sequence::RangeTo(r) => ("row_num <= ?", args!(r.end).to_vec()),
-                        Sequence::RangeFrom(r) => ("row_num >= ?", args!(r.start).to_vec()),
+                        Sequence::RangeTo(r) => ("seqnum <= ?", args!(r.end).to_vec()),
+                        Sequence::RangeFrom(r) => ("seqnum >= ?", args!(r.start).to_vec()),
                         Sequence::Range(r) => (
-                            "(row_num <= ? AND row_num >= ?)",
+                            "(seqnum <= ? AND seqnum >= ?)",
                             args!(*r.end(), *r.start()).to_vec(),
                         ),
                     };
