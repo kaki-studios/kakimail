@@ -16,7 +16,7 @@ impl IMAPOp for Uid {
         crate::imap::ResponseInfo,
     )> {
         let (cmd, rest) = args.split_once(" ").context("should be parseable")?;
-        match cmd {
+        match cmd.to_lowercase().as_str() {
             //TODO copy, move, fetch, store
             "expunge" => super::expunge::expunge_or_uid(tag, rest, state, db, true).await,
             "search" => super::search::search_or_uid(tag, rest, state, db, true).await,
