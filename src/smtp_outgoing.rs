@@ -44,9 +44,7 @@ impl SmtpOutgoing {
         })
     }
     pub async fn serve(mut self) -> Result<()> {
-        tracing::info!("greeting...");
         self.greet().await?;
-        tracing::info!("greeted!");
         // let mut buf = vec![0; 65536];
         let mut buf: &mut [u8] = &mut [0; 65536];
         loop {

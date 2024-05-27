@@ -67,7 +67,7 @@ impl SMTPStateMachine {
         let state = self.state.clone();
         match (command.as_str(), state) {
             ("ehlo", _) => {
-                tracing::info!("Sending AUTH info");
+                tracing::trace!("Sending AUTH info");
                 self.state = SMTPState::Greeted;
                 Ok(self.ehlo_greeting.as_bytes())
             }

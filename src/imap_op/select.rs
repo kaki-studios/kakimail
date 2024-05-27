@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context};
+use nom::AsBytes;
 
 use crate::imap::{IMAPOp, IMAPState, ResponseInfo, SelectedState};
 
@@ -37,7 +38,12 @@ pub(super) async fn select_or_examine(
     crate::imap::ResponseInfo,
 )> {
     let IMAPState::Authed(id) = state else {
-        return Err(anyhow!("bad state"));
+        //outlook client somehow submits 2 select commands?? this is the proper response for them
+        return Ok((
+            vec!["* BAD Wrong state\r\n".as_bytes().to_vec()],
+            state,
+            ResponseInfo::Regular,
+        ));
     };
     let mut msg = args.split_whitespace();
     let mailbox = match msg.next().context("should provide mailbox name") {
