@@ -56,7 +56,11 @@ pub(super) async fn search_or_uid(
     };
 
     // TODO some info might be in next command like in append
-    let search_args = parsing::imap::search(args)?;
+    let mut search_args = parsing::imap::search(args)?;
+    if search_args.return_opts.is_empty() {
+        //" If no result option is specified or empty list of options is specified as "()", ALL is assumed"
+        search_args.return_opts = vec![ReturnOptions::All];
+    }
     let db_result = db
         .lock()
         .await
