@@ -16,8 +16,10 @@ impl IMAPOp for List {
         crate::imap::IMAPState,
         crate::imap::ResponseInfo,
     )> {
-        let IMAPState::Authed(id) = state else {
-            return Err(anyhow!("bad state"));
+        let id = match state {
+            IMAPState::Authed(id) => id,
+            IMAPState::Selected(x) => x.user_id,
+            _ => return Err(anyhow!("bad state")),
         };
         //TODO fix this
         let mut mailboxes = db
