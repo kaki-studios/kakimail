@@ -4,7 +4,7 @@ WORKDIR /usr/src/app
 
 COPY . .
 
-RUN apt-get update -y && apt-get install -y libsqlite3-dev cmake
+RUN apt-get update -y && apt-get install -y libsqlite3-dev cmake sqlite3-pcre
 RUN cargo build --release
 
 #inter-container communication or something idk

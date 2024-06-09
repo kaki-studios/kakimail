@@ -307,8 +307,9 @@ impl SearchKeys {
                 result
             }
             SearchKeys::To(s) => (
-                "data LIKE ?".to_string(),
-                args!(format!("To:%{}%", s)).to_vec(),
+                "data REGEXP ?".to_string(),
+                //regex god
+                args!(format!(".*To: .*{}.*", s)).to_vec(),
             ),
             SearchKeys::SequenceSet(s) => {
                 let mut final_str = String::from("(");

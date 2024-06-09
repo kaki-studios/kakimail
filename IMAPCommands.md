@@ -26,7 +26,7 @@
 - [X] close
 - [X] unselect
 - [X] expunge
-- [ ] search
+- [X] search
 - [ ] fetch
 - [ ] store
 - [ ] copy

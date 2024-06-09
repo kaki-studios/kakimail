@@ -7,6 +7,7 @@ pub mod delete;
 pub mod enable;
 pub mod examine;
 pub mod expunge;
+pub mod fetch;
 pub mod idle;
 pub mod list;
 pub mod login;

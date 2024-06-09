@@ -269,6 +269,7 @@ async fn exec_command(
         "uid" => Ok(imap_op::uid::Uid::process(tag, args, state, db).await?),
         "idle" => Ok(imap_op::idle::Idle::process(tag, args, state, db).await?),
         "search" => Ok(imap_op::search::Search::process(tag, args, state, db).await?),
+        "fetch" => Ok(imap_op::fetch::Fetch::process(tag, args, state, db).await?),
         _ => Err(anyhow!("invalid command")),
     }
 }

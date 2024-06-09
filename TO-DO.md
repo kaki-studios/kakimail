@@ -10,7 +10,7 @@
     - [X] split `imap.rs` into multiple files
     - [x] support for multiple mailboxes and namespacing (see next example)
     - [X] support for command arguments inside quotes, eg `A000 SUBSCRIBE "Personal/School Stuff"` (did it dirtily)
-    - [ ] implement message sequence numbers for 
+    - [X] implement message sequence numbers
     - [ ] all commands
 - [X] support for some SMTP extensions **MOST NOTABLY STARTTLS**
 - [X] support for implicit tls ports
