@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use chrono::FixedOffset;
-use libsql_client::{args, Statement, Value};
+use libsql_client::Value;
 use rusqlite::*;
 use tokio::sync::mpsc::Sender;
 
@@ -28,13 +28,15 @@ impl DBClient {
         };
         let db = rusqlite::Connection::open(path)?;
         //safety: trust me bro
-        unsafe { db.load_extension_enable()? }
+        unsafe {
+            let _guard = LoadExtensionGuard::new(&db)?;
+            db.load_extension("/usr/lib/sqlite3/pcre.so", None)?;
+        }
 
         //USERS TABLE, just in case kakimail-website didn't create it already
         db.execute_batch(
             //NOTE: need to have sqlite3-pcre installed
-            "select load_extension('/usr/lib/sqlite3/pcre.so');
-            PRAGMA foreign_keys = ON;
+            "PRAGMA foreign_keys = ON;
             CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT UNIQUE, password TEXT);
             CREATE INDEX IF NOT EXISTS users_name ON users(name);
             CREATE INDEX IF NOT EXISTS users_id ON users(id);"
@@ -348,37 +350,17 @@ impl DBClient {
                 raw_str.extend(i.0.chars());
                 raw_str.extend(" AND ".chars());
             });
-
-        // let (raw_str, values) = db_args.iter().filter(|(i, _)| !i.is_empty()).fold(
-        //     (String::new(), params!().to_vec()),
-        //     |mut acc, n| {
-        //         acc.1.extend(n.1.clone());
-        //         acc.0.extend(n.0.chars());
-        //         acc.0.extend(" AND ".chars());
-        //         acc
-        //     },
-        // );
         let requirements = raw_str
             //dirty
             .strip_suffix(" AND ")
             .context("should always happen")?;
-        // tracing::debug!(
-        //     "db_args: {:?}, values: {:?}, raw_str: {:?}",
-        //     db_args,
-        //     values,
-        //     requirements
-        // );
         let select = if uid { "uid" } else { "seqnum" };
 
-        let string = format!(
-            //test this
+        let final_str = format!(
             "SELECT {} FROM mail WHERE mailbox_id = {} AND {}",
             select, mailbox_id, requirements
         );
-        // println!("{}\n{:?}", string, values);
-        // let stmt = Statement::with_args(string, &values);
-        // println!("{}", stmt.to_string());
-        Ok((string, values))
+        Ok((final_str, values))
     }
     pub async fn exec_search_query(
         &self,
@@ -387,6 +369,7 @@ impl DBClient {
         uid: bool,
     ) -> Result<String> {
         let (stmt, values) = Self::get_search_query(search_args.clone(), mailbox_id, uid)?;
+        tracing::debug!("sql search statement is: {}", stmt);
 
         let values = values
             .iter()
@@ -427,6 +410,7 @@ impl DBClient {
                         .join(",")
                 )),
                 ReturnOptions::Count => Some(format!("COUNT {}", str_result.len())),
+                //TODO
                 ReturnOptions::Save => Some("".to_owned()),
             })
             .collect::<Vec<String>>()

@@ -232,15 +232,16 @@ impl SearchKeys {
                 args!(format!("%{}%", s)).to_vec(),
             ),
             SearchKeys::Header(x, y) => (
-                "data LIKE ?".to_string(),
-                //a bit too loose matching, the second % can match crlf even though it's not
-                //supposed to
-                args!(format!("%{}:%{}%", x, y)).to_vec(),
+                "data REGEXP ?".to_string(),
+                //regex god
+                args!(format!(".*{}: .*{}.*", x, y)).to_vec(),
             ),
             //whatever, same as text even though not supposed to be
             SearchKeys::Body(s) => (
-                "data LIKE ?".to_string(),
-                args!(format!("%{}%", s)).to_vec(),
+                "data REGEXP ?".to_string(),
+                //basically the line cannot contain ':' (header fields always have it)
+                //TODO: improve this, too strict
+                args!(format!("^(?!.*:).*{}.*", s)).to_vec(),
             ),
             //the flags
             SearchKeys::Answered => (
@@ -284,16 +285,11 @@ impl SearchKeys {
                 "flags LIKE ?".to_owned(),
                 args!(IMAPFlags::Draft.to_string().replace("1", "0")).to_vec(),
             ),
-            //somewhat scuffed
-            SearchKeys::Not(s) => (
-                s.to_sql_arg(uid)
-                    .0
-                    //witchcraft
-                    .replace("LIKE", "NOT LIKE")
-                    .replace("<", ">")
-                    .replace(">", "<"),
-                s.to_sql_arg(uid).1,
-            ),
+            SearchKeys::Not(s) => {
+                let result = s.to_sql_arg(uid);
+                let new_string = format!("NOT ({})", result.0);
+                (new_string, result.1)
+            }
             //test these please
             SearchKeys::Larger(n) => ("length(data) > ?".to_owned(), args!(*n).to_vec()),
             SearchKeys::Smaller(n) => ("length(data) < ?".to_owned(), args!(*n).to_vec()),
@@ -338,8 +334,8 @@ impl SearchKeys {
                 (final_str, final_args)
             }
             SearchKeys::Bcc(s) => (
-                "data LIKE ?".to_string(),
-                args!(format!("Bcc:%{}%", s)).to_vec(),
+                "data REGEXP ?".to_string(),
+                args!(format!(".*Bcc: .*{}.*", s)).to_vec(),
             ),
             SearchKeys::Before(s) => {
                 let datetime_str = s.format(parsing::DB_DATETIME_FMT).to_string();
@@ -388,22 +384,21 @@ impl SearchKeys {
                 (final_str, final_args)
             }
             SearchKeys::Subject(s) => (
-                "data LIKE ?".to_string(),
-                args!(format!("Subject:%{}%", s)).to_vec(),
+                "data REGEXP ?".to_string(),
+                args!(format!(".*Subject: .*{}.*", s)).to_vec(),
             ),
             SearchKeys::Cc(s) => (
-                "data LIKE ?".to_string(),
-                args!(format!("Cc:%{}%", s)).to_vec(),
+                "data REGEXP ?".to_string(),
+                args!(format!(".*Cc: .*{}.*", s)).to_vec(),
             ),
             SearchKeys::From(s) => (
-                "data LIKE ?".to_string(),
-                args!(format!("From:%{}%", s)).to_vec(),
+                "data REGEXP ?".to_string(),
+                args!(format!(".*From: .*{}.*", s)).to_vec(),
             ),
             SearchKeys::Keyword(s) => ("flags LIKE ?".to_owned(), args!(s.to_string()).to_vec()),
-            SearchKeys::Unkeyword(s) => (
-                "flags LIKE ?".to_owned(),
-                args!(s.to_string().replace("1", "0")).to_vec(),
-            ),
+            SearchKeys::Unkeyword(s) => {
+                ("flags NOT LIKE ?".to_owned(), args!(s.to_string()).to_vec())
+            }
         }
     }
 }
