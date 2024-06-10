@@ -7,9 +7,16 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use chrono::FixedOffset;
+use fancy_regex::Regex;
 use libsql_client::Value;
 use rusqlite::*;
 use tokio::sync::mpsc::Sender;
+fn regexp_extract(pattern: &str, text: &str) -> Result<Option<String>> {
+    let re = Regex::new(pattern)?;
+    Ok(re
+        .find(text)
+        .map(|mat| mat.map(|l| l.as_str().to_string()))?)
+}
 
 pub struct DBClient {
     db: rusqlite::Connection,
@@ -27,11 +34,27 @@ impl DBClient {
             "./data/kakimail.db".to_string()
         };
         let db = rusqlite::Connection::open(path)?;
+
         //safety: trust me bro
         unsafe {
             let _guard = LoadExtensionGuard::new(&db)?;
             db.load_extension("/usr/lib/sqlite3/pcre.so", None)?;
         }
+
+        db.create_scalar_function(
+            "regexp_extract",
+            2,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+            move |ctx| {
+                let pattern = ctx.get::<String>(0)?;
+                let text = ctx.get::<String>(1)?;
+                match regexp_extract(&pattern, &text) {
+                    Ok(Some(result)) => Ok(result),
+                    Ok(None) => Ok("".to_string()), // Return an empty string if no match is found
+                    Err(e) => Err(rusqlite::Error::UserFunctionError(e.into())),
+                }
+            },
+        )?;
 
         //USERS TABLE, just in case kakimail-website didn't create it already
         db.execute_batch(
