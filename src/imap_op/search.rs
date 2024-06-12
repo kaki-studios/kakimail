@@ -1,8 +1,3 @@
-//TODO
-//-implement to_sql_arg()
-//-do some stuff in database.rs
-//-done!
-
 use std::ops::Deref;
 use std::ops::RangeFrom;
 use std::ops::RangeInclusive;
@@ -13,7 +8,8 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use anyhow::Ok;
 use anyhow::Result;
-use chrono::FixedOffset;
+use chrono::NaiveDate;
+use chrono::NaiveTime;
 use libsql_client::args;
 use libsql_client::Value;
 use tokio::sync::Mutex;
@@ -58,7 +54,7 @@ pub(super) async fn search_or_uid(
     // TODO some info might be in next command like in append
     let mut search_args = parsing::imap::search(args)?;
     if search_args.return_opts.is_empty() {
-        //" If no result option is specified or empty list of options is specified as "()", ALL is assumed"
+        // "If no result option is specified or empty list of options is specified as "()", ALL is assumed"
         search_args.return_opts = vec![ReturnOptions::All];
     }
     let db_result = db
@@ -106,7 +102,7 @@ pub enum SearchKeys {
     All,
     Answered,
     Bcc(String),
-    Before(chrono::DateTime<FixedOffset>),
+    Before(NaiveDate),
     Body(String),
     Cc(String),
     Deleted,
@@ -117,13 +113,13 @@ pub enum SearchKeys {
     Keyword(IMAPFlags),
     Larger(i64),
     Not(Box<SearchKeys>),
-    On(chrono::DateTime<FixedOffset>),
+    On(chrono::NaiveDate),
     Or(Box<(SearchKeys, SearchKeys)>),
     Seen,
-    SentBefore(chrono::DateTime<FixedOffset>),
-    SentOn(chrono::DateTime<FixedOffset>),
-    SentSince(chrono::DateTime<FixedOffset>),
-    Since(chrono::DateTime<FixedOffset>),
+    SentBefore(chrono::NaiveDate),
+    SentOn(chrono::NaiveDate),
+    SentSince(chrono::NaiveDate),
+    Since(chrono::NaiveDate),
     Smaller(i64),
     Subject(String),
     Text(String),
@@ -148,7 +144,7 @@ impl FromStr for SearchKeys {
             "answered" => SearchKeys::Answered,
             "bcc" => SearchKeys::Bcc(end),
             "before" => {
-                let datetime = chrono::DateTime::parse_from_str(&end, parsing::IMAP_DATETIME_FMT)?;
+                let datetime = chrono::NaiveDate::parse_from_str(&end, parsing::DATE_FMT)?;
                 SearchKeys::Before(datetime)
             }
             "body" => SearchKeys::Body(end),
@@ -166,10 +162,10 @@ impl FromStr for SearchKeys {
             }
             "keyword" => SearchKeys::Keyword(IMAPFlags::from_str(&end)?),
             "larger" => SearchKeys::Larger(i64::from_str(&end)?),
-            "not" => SearchKeys::Keyword(IMAPFlags::from_str(&end)?),
+            "not" => SearchKeys::Not(Box::new(SearchKeys::from_str(&end)?)),
             "on" => {
-                let datetime = chrono::DateTime::parse_from_str(&end, parsing::IMAP_DATETIME_FMT);
-                SearchKeys::On(datetime?)
+                let date = chrono::NaiveDate::parse_from_str(&end, parsing::DATE_FMT)?;
+                SearchKeys::On(date)
             }
             "or" => {
                 //let's hope it works, see parsing/imap.rs
@@ -183,19 +179,19 @@ impl FromStr for SearchKeys {
             }
             "seen" => SearchKeys::Seen,
             "sentbefore" => {
-                let datetime = chrono::DateTime::parse_from_str(&end, parsing::IMAP_DATETIME_FMT)?;
+                let datetime = chrono::NaiveDate::parse_from_str(&end, parsing::DATE_FMT)?;
                 SearchKeys::SentBefore(datetime)
             }
             "senton" => {
-                let datetime = chrono::DateTime::parse_from_str(&end, parsing::IMAP_DATETIME_FMT)?;
+                let datetime = chrono::NaiveDate::parse_from_str(&end, parsing::DATE_FMT)?;
                 SearchKeys::SentOn(datetime)
             }
             "sentsince" => {
-                let datetime = chrono::DateTime::parse_from_str(&end, parsing::IMAP_DATETIME_FMT)?;
+                let datetime = chrono::NaiveDate::parse_from_str(&end, parsing::DATE_FMT)?;
                 SearchKeys::SentSince(datetime)
             }
             "since" => {
-                let datetime = chrono::DateTime::parse_from_str(&end, parsing::IMAP_DATETIME_FMT)?;
+                let datetime = chrono::NaiveDate::parse_from_str(&end, parsing::IMAP_DATETIME_FMT)?;
                 SearchKeys::Since(datetime)
             }
             "smaller" => SearchKeys::Smaller(i64::from_str(&end)?),
@@ -338,25 +334,42 @@ impl SearchKeys {
                 args!(format!(".*Bcc: .*{}.*", s)).to_vec(),
             ),
             SearchKeys::Before(s) => {
-                let datetime_str = s.format(parsing::DB_DATETIME_FMT).to_string();
-                //apparently this is supposed to work
-                ("date < ?".to_string(), args!(datetime_str).to_vec())
+                let unix_seconds = s.and_time(NaiveTime::default()).timestamp();
+                (
+                    "unixepoch(date) < ?".to_string(),
+                    args!(unix_seconds).to_vec(),
+                )
             }
             SearchKeys::On(s) => {
-                //FIX should disregard time and timezone (only date should matter)
-                let datetime_str = s.format(parsing::DB_DATETIME_FMT).to_string();
-                ("date = ?".to_string(), args!(datetime_str).to_vec())
+                let unix_seconds = s.and_time(NaiveTime::default()).timestamp();
+                (
+                    "unixepoch(date) = ?".to_string(),
+                    args!(unix_seconds).to_vec(),
+                )
             }
             SearchKeys::Since(s) => {
-                let datetime_str = s.format(parsing::DB_DATETIME_FMT).to_string();
-                ("date > ?".to_string(), args!(datetime_str).to_vec())
+                let unix_seconds = s.and_time(NaiveTime::default()).timestamp();
+                (
+                    "unixepoch(date) > ?".to_string(),
+                    args!(unix_seconds).to_vec(),
+                )
             }
-            //this is not the same as Before, this requires that the messages Date field is less
-            //than the specified date
-            //TODO: these are the only ones left
-            SearchKeys::SentBefore(s) => ("".to_owned(), args!().to_vec()),
-            SearchKeys::SentSince(s) => ("".to_owned(), args!().to_vec()),
-            SearchKeys::SentOn(s) => ("".to_owned(), args!().to_vec()),
+            SearchKeys::SentBefore(s) => {
+                let datetime_str = s.format(parsing::DB_DATETIME_FMT).to_string();
+                //trust me bro
+                (r#"rfc2822_to_iso8601(regex_capture('^Date: (?:\w{3}, )?(\d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2} [+-]\d{4})$', data, 1)) < ?"#.to_owned(), args!(datetime_str).to_vec())
+            }
+            SearchKeys::SentSince(s) => {
+                let datetime_str = s.format(parsing::DB_DATETIME_FMT).to_string();
+                (r#"rfc2822_to_iso8601(regex_capture('^Date: (?:\w{3}, )?(\d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2} [+-]\d{4})$', data, 1)) > ?"#.to_owned(), args!(datetime_str).to_vec())
+            }
+            SearchKeys::SentOn(s) => {
+                //BIGGEST TODO: s is a NaiveDate, can't format it using DB_DATETIME_FMT. convert it
+                //to unix seconds, and make yet another sqlite function to convert rfc2822 (without
+                //timezone) to unix seconds (+change regex to ignore timezone!!)
+                let datetime_str = s.format(parsing::DB_DATETIME_FMT).to_string();
+                (r#"rfc2822_to_iso8601(regex_capture('^Date: (?:\w{3}, )?(\d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2} [+-]\d{4})$', data, 1)) = ?"#.to_owned(), args!(datetime_str).to_vec())
+            }
 
             SearchKeys::Uid(s) => {
                 let mut final_str = String::from("(");

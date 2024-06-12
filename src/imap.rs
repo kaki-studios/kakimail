@@ -127,13 +127,15 @@ impl IMAP {
                 stream = stream.upgrade_to_tls(tls_acceptor).await?;
             }
             ResponseInfo::RedoForNextMsg => {
-                let mut buf = [0; 1024];
+                // let mut buf = vec![];
+                let mut buf: [u8; 65536] = [0; 65536];
                 let n = stream.read(&mut buf).await?;
 
                 let extra = std::str::from_utf8(&buf[..n])?;
                 let mut new = args.strip_suffix("\r\n").unwrap_or(&args).to_owned();
+                tracing::info!("Received {extra} \nIn state {:?}", state,);
                 new.push_str(&format!(" {}", extra));
-                dbg!(&new);
+                tracing::debug!("{}", new);
 
                 let (resp, new_state, info) = exec_command(&command, tag, &new, state, db).await?;
                 for item in resp {

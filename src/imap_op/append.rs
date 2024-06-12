@@ -86,6 +86,8 @@ impl IMAPOp for Append {
             let resp = b"+ Ready for literal data\r\n".to_vec();
             return Ok((vec![resp], state, ResponseInfo::RedoForNextMsg));
         }
+        tracing::debug!("args_len: {}", args.len());
+        tracing::debug!("count: {}", count);
         mail_data = args[args.len() - count..].to_string();
 
         let mut datetime = None;

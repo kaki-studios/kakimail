@@ -93,37 +93,25 @@ pub fn search(input: &str) -> Result<SearchArgs, nom::Err<nom::error::Error<Stri
             | "undeleted" | "undraft" | "unflagged" | "unseen" => new_args.push(arg.to_string()),
 
             "bcc" | "body" | "cc" | "from" | "keyword" | "larger" | "not" | "smaller"
-            | "subject" | "text" | "to" | "uid" | "unkeyword" => {
+            | "subject" | "text" | "to" | "uid" | "unkeyword" | "before" | "on" | "sentbefore"
+            | "senton" | "sentsince" | "since" => {
                 //find a way to do this without cloning
                 if let Some(x) = iterator.next() {
                     new_args.push([arg.clone(), x.clone()].join(" "))
-                }
-            }
-            //Time-related
-            "before" | "on" | "sentbefore" | "senton" | "sentsince" | "since" => {
-                //FIX spaghetti code
-                //remember that the time format contains 2 spaces
-
-                if let Some(x) = iterator.next() {
-                    if let Some(y) = iterator.next() {
-                        if let Some(z) = iterator.next() {
-                            new_args.push([arg.clone(), x.clone(), y.clone(), z.clone()].join(" "));
-                        }
-                    }
                 }
             }
             "header" | "or" => {
                 //two strings
                 if let Some(x) = iterator.next() {
                     if let Some(y) = iterator.next() {
-                        //some illegal char, FIX
+                        //some illegal char, TODO: FIX
                         let rest = [x.clone(), y.clone()].join("`");
                         new_args.push([arg.clone(), rest].join(" "))
                     }
                 }
             }
             _ => {
-                //could be sequence set
+                //sequence set
                 new_args.push(arg.to_string())
             }
         }
@@ -240,7 +228,7 @@ mod tests {
     #[test]
     fn test_search() {
         let s = search(
-            "RETURN (MIN MAX) UNSEEN BCC test TEXT \"some text\" ON 02-Oct-2020 17:16:10 +0300 2,3,7:10,15:*",
+            "RETURN (MIN MAX) UNSEEN BCC test TEXT \"some text\" SENTON 02-Oct-2020 2,3,7:10,15:*",
         )
         .unwrap();
         dbg!(&s);
@@ -251,7 +239,7 @@ mod tests {
         //     acc
         // });
         // dbg!(x);
-        crate::database::DBClient::get_search_query(s, 0, false);
+        let (_string, _values) = crate::database::DBClient::get_search_query(s, 0, false).unwrap();
     }
     #[test]
     fn test_list() {

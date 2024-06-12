@@ -11,11 +11,36 @@ use fancy_regex::Regex;
 use libsql_client::Value;
 use rusqlite::*;
 use tokio::sync::mpsc::Sender;
+
 fn regexp_extract(pattern: &str, text: &str) -> Result<Option<String>> {
     let re = Regex::new(pattern)?;
     Ok(re
         .find(text)
         .map(|mat| mat.map(|l| l.as_str().to_string()))?)
+}
+
+fn regexp_capture(pattern: &str, text: &str, capture_idx: i32) -> Result<Option<String>> {
+    let re = Regex::new(pattern)?;
+    Ok(re
+        .captures(text)
+        .map(|mat| mat.map(|l| l.get(capture_idx as usize)))?
+        .flatten()
+        .map(|l| l.as_str().to_string()))
+}
+
+fn rfc2822_to_iso8601(input: &str) -> Result<String> {
+    //not using parse_from_rfc2822 because weekadays are optional and we don't want to error
+    //because of that
+    let datetime = chrono::DateTime::parse_from_str(input, super::parsing::MAIL_DATETIME_FMT)?;
+    Ok(datetime.format(super::parsing::DB_DATETIME_FMT).to_string())
+}
+
+fn datetime_to_date(datetime_str: &str) -> Result<String> {
+    let datetime = chrono::DateTime::parse_from_str(datetime_str, super::parsing::DB_DATETIME_FMT)?;
+    Ok(datetime
+        .date_naive()
+        .format(super::parsing::DATE_FMT)
+        .to_string())
 }
 
 pub struct DBClient {
@@ -29,7 +54,7 @@ impl DBClient {
             value
         } else {
             tracing::warn!(
-                "SQLITE_URL not set, using a default local database: ./data/kakimail.db"
+                "SQLITE_URL not set, using a default local database: ./data/kakimail/.db"
             );
             "./data/kakimail.db".to_string()
         };
@@ -38,6 +63,7 @@ impl DBClient {
         //safety: trust me bro
         unsafe {
             let _guard = LoadExtensionGuard::new(&db)?;
+            //NOTE: need to have sqlite3-pcre installed
             db.load_extension("/usr/lib/sqlite3/pcre.so", None)?;
         }
 
@@ -55,10 +81,45 @@ impl DBClient {
                 }
             },
         )?;
+        db.create_scalar_function(
+            "regexp_capture",
+            2,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+            move |ctx| {
+                let pattern = ctx.get::<String>(0)?;
+                let text = ctx.get::<String>(1)?;
+                let capture_idx = ctx.get::<i32>(2)?;
+                match regexp_capture(&pattern, &text, capture_idx) {
+                    Ok(Some(result)) => Ok(result),
+                    Ok(None) => Ok("".to_string()), // Return an empty string if no match is found
+                    Err(e) => Err(rusqlite::Error::UserFunctionError(e.into())),
+                }
+            },
+        )?;
+
+        db.create_scalar_function(
+            "rfc2822_to_iso8601",
+            1,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+            move |ctx| {
+                let datetime_str = ctx.get::<String>(0)?;
+                rfc2822_to_iso8601(&datetime_str)
+                    .map_err(|e| rusqlite::Error::UserFunctionError(e.into()))
+            },
+        )?;
+        db.create_scalar_function(
+            "datetime_to_date",
+            1,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+            move |ctx| {
+                let datetime_str = ctx.get::<String>(0)?;
+                datetime_to_date(&datetime_str)
+                    .map_err(|e| rusqlite::Error::UserFunctionError(e.into()))
+            },
+        )?;
 
         //USERS TABLE, just in case kakimail-website didn't create it already
         db.execute_batch(
-            //NOTE: need to have sqlite3-pcre installed
             "PRAGMA foreign_keys = ON;
             CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT UNIQUE, password TEXT);
             CREATE INDEX IF NOT EXISTS users_name ON users(name);
@@ -74,8 +135,8 @@ impl DBClient {
             "PRAGMA foreign_keys = ON;
             CREATE TABLE IF NOT EXISTS mailboxes (id integer primary key not null, name text, user_id integer not null, flags integer, FOREIGN KEY(user_id) REFERENCES users(id));
             CREATE INDEX IF NOT EXISTS mailbox_foreign_key ON mailboxes(user_id);
-            CREATE INDEX IF NOT EXISTS mailbox_id ON mailboxes(id);
-            INSERT OR IGNORE INTO mailboxes VALUES (0, 'INBOX', 0, 0)"
+            CREATE INDEX IF NOT EXISTS mailbox_id ON mailboxes(id);"
+            // INSERT OR IGNORE INTO mailboxes VALUES (0, 'INBOX', 0, 0)"
             //NOTE: testing only
         )
         .map_err(|e| {
@@ -392,7 +453,7 @@ impl DBClient {
         uid: bool,
     ) -> Result<String> {
         let (stmt, values) = Self::get_search_query(search_args.clone(), mailbox_id, uid)?;
-        tracing::debug!("sql search statement is: {}", stmt);
+        // tracing::debug!("sql search statement is: {}", stmt);
 
         let values = values
             .iter()
@@ -438,7 +499,7 @@ impl DBClient {
             })
             .collect::<Vec<String>>()
             .join(" ");
-        println!("test_result: {}", fmt_result);
+        // println!("test_result: {}", fmt_result);
         Ok(fmt_result)
     }
 }
