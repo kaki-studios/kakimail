@@ -195,7 +195,7 @@ mod tests {
     use std::str::FromStr;
 
     use crate::{
-        imap_op::search,
+        imap_op::search::{self, Sequence},
         parsing::imap::{literal, mailbox, number, parse_list, quoted, Mailbox},
     };
 
@@ -256,12 +256,34 @@ mod tests {
     fn test_sequence_set() {
         let test_str = "2,3,7:10,15:*";
         let result = search::SequenceSet::from_str(test_str).unwrap();
-        println!("{:?}", result);
+        let expected = SequenceSet {
+            sequences: vec![
+                Sequence::Int(2),
+                Sequence::Int(3),
+                Sequence::Range(7..=10),
+                Sequence::RangeFrom(15..),
+            ],
+        };
+        assert_eq!(result, expected)
     }
     #[test]
     #[should_panic]
     fn test_bad_sequence_set() {
         let test_str = "2,3,7:10,1s:*";
         search::SequenceSet::from_str(test_str).unwrap();
+    }
+    #[test]
+    fn test_sequence_set_from_list() {
+        let list = vec![1, 2, 3, 5, 6, 7, 9, 11, 12];
+        let result = SequenceSet::from(list);
+        let expected = SequenceSet {
+            sequences: vec![
+                Sequence::Range(1..=3),
+                Sequence::Range(5..=7),
+                Sequence::Int(9),
+                Sequence::Range(11..=12),
+            ],
+        };
+        assert_eq!(result, expected)
     }
 }

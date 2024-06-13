@@ -23,6 +23,9 @@ use crate::{
     imap::{self, IMAPOp},
 };
 
+const DATE_HEADER_REGEX: &'static str =
+    r#"^Date: (?:\w{3}, )?(\d{2} \w{3} \d{4}) \d{2}:\d{2}:\d{2} [+-]\d{4}$"#;
+
 pub struct Search;
 
 impl IMAPOp for Search {
@@ -355,20 +358,34 @@ impl SearchKeys {
                 )
             }
             SearchKeys::SentBefore(s) => {
-                let datetime_str = s.format(parsing::DB_DATETIME_FMT).to_string();
-                //trust me bro
-                (r#"rfc2822_to_iso8601(regex_capture('^Date: (?:\w{3}, )?(\d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2} [+-]\d{4})$', data, 1)) < ?"#.to_owned(), args!(datetime_str).to_vec())
+                let unix_seconds = s.and_time(NaiveTime::default()).timestamp() as i32;
+                (
+                    format!(
+                        "unixepoch_rfc2822(regex_capture('{}', data, 1)) < ?",
+                        DATE_HEADER_REGEX
+                    ),
+                    args!(unix_seconds).to_vec(),
+                )
             }
             SearchKeys::SentSince(s) => {
-                let datetime_str = s.format(parsing::DB_DATETIME_FMT).to_string();
-                (r#"rfc2822_to_iso8601(regex_capture('^Date: (?:\w{3}, )?(\d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2} [+-]\d{4})$', data, 1)) > ?"#.to_owned(), args!(datetime_str).to_vec())
+                let unix_seconds = s.and_time(NaiveTime::default()).timestamp() as i32;
+                (
+                    format!(
+                        "unixepoch_rfc2822(regex_capture('{}', data, 1)) > ?",
+                        DATE_HEADER_REGEX
+                    ),
+                    args!(unix_seconds).to_vec(),
+                )
             }
             SearchKeys::SentOn(s) => {
-                //BIGGEST TODO: s is a NaiveDate, can't format it using DB_DATETIME_FMT. convert it
-                //to unix seconds, and make yet another sqlite function to convert rfc2822 (without
-                //timezone) to unix seconds (+change regex to ignore timezone!!)
-                let datetime_str = s.format(parsing::DB_DATETIME_FMT).to_string();
-                (r#"rfc2822_to_iso8601(regex_capture('^Date: (?:\w{3}, )?(\d{2} \w{3} \d{4} \d{2}:\d{2}:\d{2} [+-]\d{4})$', data, 1)) = ?"#.to_owned(), args!(datetime_str).to_vec())
+                let unix_seconds = s.and_time(NaiveTime::default()).timestamp() as i32;
+                (
+                    format!(
+                        "unixepoch_rfc2822(regex_capture('{}', data, 1)) = ?",
+                        DATE_HEADER_REGEX
+                    ),
+                    args!(unix_seconds).to_vec(),
+                )
             }
 
             SearchKeys::Uid(s) => {
@@ -416,7 +433,7 @@ impl SearchKeys {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Sequence {
     Int(u32),
     RangeTo(RangeToInclusive<u32>),
@@ -466,7 +483,7 @@ impl Sequence {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct SequenceSet {
     pub sequences: Vec<Sequence>,
 }
@@ -474,6 +491,61 @@ pub struct SequenceSet {
 impl SequenceSet {
     pub fn contains(&self, num: u32) -> bool {
         self.sequences.iter().any(|i| i.contains(num))
+    }
+}
+
+impl ToString for SequenceSet {
+    fn to_string(&self) -> String {
+        self.sequences
+            .iter()
+            .map(|i| match i {
+                Sequence::Int(u) => u.to_string(),
+                Sequence::RangeFull => "*:*".to_string(),
+                Sequence::Range(u) => format!("{}:{}", u.start(), u.end()),
+                Sequence::RangeTo(u) => format!("*:{}", u.end),
+                Sequence::RangeFrom(u) => format!("{}:*", u.start),
+            })
+            .collect::<Vec<String>>()
+            .join(",")
+    }
+}
+
+impl From<Vec<i32>> for SequenceSet {
+    fn from(nums: Vec<i32>) -> Self {
+        if nums.is_empty() {
+            return Self::default();
+        }
+
+        let mut result = SequenceSet::default();
+        let mut iter = nums.into_iter();
+        let mut start = iter.next().unwrap();
+        let mut end = start;
+
+        for num in iter {
+            if num == end + 1 {
+                end = num;
+            } else {
+                if start == end {
+                    result.sequences.push(Sequence::Int(start as u32));
+                } else {
+                    result
+                        .sequences
+                        .push(Sequence::Range(start as u32..=end as u32));
+                }
+                start = num;
+                end = start;
+            }
+        }
+
+        if start == end {
+            result.sequences.push(Sequence::Int(start as u32));
+        } else {
+            result
+                .sequences
+                .push(Sequence::Range(start as u32..=end as u32));
+        }
+
+        result
     }
 }
 

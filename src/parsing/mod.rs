@@ -5,4 +5,5 @@ pub const IMAP_DATETIME_FMT: &'static str = "%d-%b-%Y %T %z";
 pub const DATE_FMT: &'static str = "%d-%b-%Y";
 //we made our own fmt string because in imap, the weekday is optional and we don't want to error
 //because of it
-pub const MAIL_DATETIME_FMT: &'static str = "%d %b %Y %T %z";
+// pub const MAIL_DATETIME_FMT: &'static str = "%d %b %Y %T %z";
+pub const MAIL_NAIVE_DATE_FMT: &'static str = "%d %b %Y";
