@@ -23,8 +23,8 @@ use crate::{
     imap::{self, IMAPOp},
 };
 
-const DATE_HEADER_REGEX: &'static str =
-    r#"^Date: (?:\w{3}, )?(\d{2} \w{3} \d{4}) \d{2}:\d{2}:\d{2} [+-]\d{4}$"#;
+pub const DATE_HEADER_REGEX: &'static str =
+    r#"Date: (?:\w{3}, )?(\d{2} \w{3} \d{4}) \d{2}:\d{2}:\d{2} [+-]\d{4}"#;
 
 pub struct Search;
 
@@ -147,7 +147,7 @@ impl FromStr for SearchKeys {
             "answered" => SearchKeys::Answered,
             "bcc" => SearchKeys::Bcc(end),
             "before" => {
-                let datetime = chrono::NaiveDate::parse_from_str(&end, parsing::DATE_FMT)?;
+                let datetime = chrono::NaiveDate::parse_from_str(&end, parsing::SEARCH_DATE_FMT)?;
                 SearchKeys::Before(datetime)
             }
             "body" => SearchKeys::Body(end),
@@ -167,7 +167,7 @@ impl FromStr for SearchKeys {
             "larger" => SearchKeys::Larger(i64::from_str(&end)?),
             "not" => SearchKeys::Not(Box::new(SearchKeys::from_str(&end)?)),
             "on" => {
-                let date = chrono::NaiveDate::parse_from_str(&end, parsing::DATE_FMT)?;
+                let date = chrono::NaiveDate::parse_from_str(&end, parsing::SEARCH_DATE_FMT)?;
                 SearchKeys::On(date)
             }
             "or" => {
@@ -182,19 +182,19 @@ impl FromStr for SearchKeys {
             }
             "seen" => SearchKeys::Seen,
             "sentbefore" => {
-                let datetime = chrono::NaiveDate::parse_from_str(&end, parsing::DATE_FMT)?;
+                let datetime = chrono::NaiveDate::parse_from_str(&end, parsing::SEARCH_DATE_FMT)?;
                 SearchKeys::SentBefore(datetime)
             }
             "senton" => {
-                let datetime = chrono::NaiveDate::parse_from_str(&end, parsing::DATE_FMT)?;
+                let datetime = chrono::NaiveDate::parse_from_str(&end, parsing::SEARCH_DATE_FMT)?;
                 SearchKeys::SentOn(datetime)
             }
             "sentsince" => {
-                let datetime = chrono::NaiveDate::parse_from_str(&end, parsing::DATE_FMT)?;
+                let datetime = chrono::NaiveDate::parse_from_str(&end, parsing::SEARCH_DATE_FMT)?;
                 SearchKeys::SentSince(datetime)
             }
             "since" => {
-                let datetime = chrono::NaiveDate::parse_from_str(&end, parsing::IMAP_DATETIME_FMT)?;
+                let datetime = chrono::NaiveDate::parse_from_str(&end, parsing::SEARCH_DATE_FMT)?;
                 SearchKeys::Since(datetime)
             }
             "smaller" => SearchKeys::Smaller(i64::from_str(&end)?),
@@ -337,54 +337,55 @@ impl SearchKeys {
                 args!(format!(".*Bcc: .*{}.*", s)).to_vec(),
             ),
             SearchKeys::Before(s) => {
-                let unix_seconds = s.and_time(NaiveTime::default()).timestamp();
+                //not supposed to take into account the time, but it's fine for now
+                let unix_seconds = s.and_time(NaiveTime::default()).and_utc().timestamp();
                 (
                     "unixepoch(date) < ?".to_string(),
                     args!(unix_seconds).to_vec(),
                 )
             }
             SearchKeys::On(s) => {
-                let unix_seconds = s.and_time(NaiveTime::default()).timestamp();
+                let unix_seconds = s.and_time(NaiveTime::default()).and_utc().timestamp();
                 (
                     "unixepoch(date) = ?".to_string(),
                     args!(unix_seconds).to_vec(),
                 )
             }
             SearchKeys::Since(s) => {
-                let unix_seconds = s.and_time(NaiveTime::default()).timestamp();
+                let unix_seconds = s.and_time(NaiveTime::default()).and_utc().timestamp();
                 (
                     "unixepoch(date) > ?".to_string(),
                     args!(unix_seconds).to_vec(),
                 )
             }
             SearchKeys::SentBefore(s) => {
-                let unix_seconds = s.and_time(NaiveTime::default()).timestamp() as i32;
+                let date_str = s.format(parsing::DB_DATE_FMT).to_string();
                 (
                     format!(
-                        "unixepoch_rfc2822(regex_capture('{}', data, 1)) < ?",
+                        "rfc2822_to_date(regex_capture('{}', data, 1)) < ?",
                         DATE_HEADER_REGEX
                     ),
-                    args!(unix_seconds).to_vec(),
+                    args!(date_str).to_vec(),
                 )
             }
             SearchKeys::SentSince(s) => {
-                let unix_seconds = s.and_time(NaiveTime::default()).timestamp() as i32;
+                let date_str = s.format(parsing::DB_DATE_FMT).to_string();
                 (
                     format!(
-                        "unixepoch_rfc2822(regex_capture('{}', data, 1)) > ?",
+                        "rfc2822_to_date(regex_capture('{}', data, 1)) > ?",
                         DATE_HEADER_REGEX
                     ),
-                    args!(unix_seconds).to_vec(),
+                    args!(date_str).to_vec(),
                 )
             }
             SearchKeys::SentOn(s) => {
-                let unix_seconds = s.and_time(NaiveTime::default()).timestamp() as i32;
+                let date_str = s.format(parsing::DB_DATE_FMT).to_string();
                 (
                     format!(
-                        "unixepoch_rfc2822(regex_capture('{}', data, 1)) = ?",
+                        "rfc2822_to_date(regex_capture('{}', data, 1)) = ?",
                         DATE_HEADER_REGEX
                     ),
-                    args!(unix_seconds).to_vec(),
+                    args!(date_str).to_vec(),
                 )
             }
 

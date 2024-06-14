@@ -28,8 +28,8 @@ def callback(bytes):
     return f"\0{username}\0{password}".encode()
 
 
-mail = r"""Date: 01 Jan 2023 23:59:59 +0000
-Subject: test 
+mail = r"""Subject: test 
+Date: 01 Jan 2023 23:59:59 +0000
 To: kaki@kaki.foo
 teststststststststststststststs
 """
@@ -40,9 +40,10 @@ client.list()
 client.status("INBOX", "(UIDNEXT MESSAGES)")
 client.append("INBOX", "", time.time(), bytes(mail, "utf-8"))
 client.select("INBOX", False)
-(typ, [data]) = client.search(None, "RETURN (MIN COUNT ALL) SENTSINCE 01-Jan-2000")
-print(typ)
-print(data)
+for req in ["SINCE", "ON", "BEFORE"]:
+    (typ, [data]) = client.search(None, f"RETURN (MIN COUNT ALL) SENT{req} 14-Jun-2024")
+    print(typ)
+    print(data)
 (typ, [data]) = client.search(None, "RETURN (MIN COUNT ALL) SUBJECT test")
 print(typ)
 print(data)

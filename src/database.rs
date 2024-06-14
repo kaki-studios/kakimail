@@ -2,24 +2,24 @@ use std::{char, str::FromStr};
 
 use crate::{
     imap_op::search::{ReturnOptions, SearchKeys, SequenceSet},
-    parsing::imap::SearchArgs,
+    parsing::{self, imap::SearchArgs},
     smtp_common::Mail,
 };
 use anyhow::{anyhow, Context, Result};
-use chrono::{FixedOffset, NaiveTime};
+use chrono::FixedOffset;
 use fancy_regex::Regex;
 use libsql_client::Value;
 use rusqlite::*;
 use tokio::sync::mpsc::Sender;
 
-fn regex_extract(pattern: &str, text: &str) -> Result<Option<String>> {
+pub fn regex_extract(pattern: &str, text: &str) -> Result<Option<String>> {
     let re = Regex::new(pattern)?;
     Ok(re
         .find(text)
         .map(|mat| mat.map(|l| l.as_str().to_string()))?)
 }
 
-fn regex_capture(pattern: &str, text: &str, capture_idx: i32) -> Result<Option<String>> {
+pub fn regex_capture(pattern: &str, text: &str, capture_idx: i32) -> Result<Option<String>> {
     let re = Regex::new(pattern)?;
     Ok(re
         .captures(text)
@@ -28,10 +28,10 @@ fn regex_capture(pattern: &str, text: &str, capture_idx: i32) -> Result<Option<S
         .map(|l| l.as_str().to_string()))
 }
 
-fn unixepoch_rfc2822(input: &str) -> Result<i32> {
+pub fn rfc2822_to_date(input: &str) -> Result<String> {
+    //could make more efficient
     let date = chrono::NaiveDate::parse_from_str(input, super::parsing::MAIL_NAIVE_DATE_FMT)?;
-
-    Ok(date.and_time(NaiveTime::default()).timestamp() as i32)
+    Ok(date.format(parsing::DB_DATE_FMT).to_string())
 }
 
 pub struct DBClient {
@@ -89,12 +89,12 @@ impl DBClient {
         )?;
 
         db.create_scalar_function(
-            "unixepoch_rfc2822",
+            "rfc2822_to_date",
             1,
             rusqlite::functions::FunctionFlags::SQLITE_UTF8,
             move |ctx| {
                 let datetime_str = ctx.get::<String>(0)?;
-                unixepoch_rfc2822(&datetime_str)
+                rfc2822_to_date(&datetime_str)
                     .map_err(|e| rusqlite::Error::UserFunctionError(e.into()))
             },
         )?;
@@ -244,6 +244,7 @@ impl DBClient {
         if mailbox_name != "INBOX" {
             return Err(anyhow!("no such mailbox: {}", mailbox_name));
         }
+        tracing::info!("no inbox for user: {user_id}, creating now...");
         //we need to create the inbox mailbox bc it must exist
         let result = self
             .db
@@ -257,11 +258,10 @@ impl DBClient {
     async fn get_mailbox_id_no_inbox(&self, user_id: i32, mailbox_name: &str) -> Result<i32> {
         let result = self
             .db
-            .prepare("SELECT id FROM mailboxes WHERE user_id = ? AND name = ?")?
-            .query(params![user_id, mailbox_name])?
-            .next()?
-            .context("no rows")?
-            .get::<_, i32>(0)?;
+            .prepare("SELECT id FROM mailboxes WHERE user_id = ?1 AND name = ?2")?
+            .query_row(rusqlite::params![user_id, mailbox_name], |row| {
+                row.get::<_, i32>(0)
+            })?;
         Ok(result)
     }
 
@@ -406,8 +406,8 @@ impl DBClient {
         uid: bool,
     ) -> Result<(String, Vec<Value>)> {
         dbg!(&search_args);
-        let (mut raw_str, mut values) = (String::new(), vec![]);
 
+        let (mut raw_str, mut values) = (String::new(), vec![]);
         search_args
             .search_keys
             .iter()
@@ -420,6 +420,7 @@ impl DBClient {
         let requirements = raw_str
             //dirty
             .strip_suffix(" AND ")
+            //TODO will fail if search_keys is empty
             .context("should always happen")?;
         let select = if uid { "uid" } else { "seqnum" };
 
@@ -428,6 +429,9 @@ impl DBClient {
             select, mailbox_id, requirements
         );
         dbg!(&final_str);
+        for i in &values {
+            dbg!(i);
+        }
         Ok((final_str, values))
     }
     pub async fn exec_search_query(
