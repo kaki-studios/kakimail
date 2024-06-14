@@ -12,20 +12,13 @@ use libsql_client::Value;
 use rusqlite::*;
 use tokio::sync::mpsc::Sender;
 
-pub fn regex_extract(pattern: &str, text: &str) -> Result<Option<String>> {
-    let re = Regex::new(pattern)?;
-    Ok(re
-        .find(text)
-        .map(|mat| mat.map(|l| l.as_str().to_string()))?)
-}
-
-pub fn regex_capture(pattern: &str, text: &str, capture_idx: i32) -> Result<Option<String>> {
-    let re = Regex::new(pattern)?;
-    Ok(re
-        .captures(text)
-        .map(|mat| mat.map(|l| l.get(capture_idx as usize)))?
+pub fn regex_capture(pattern: &str, text: &str, capture_idx: i32) -> Option<String> {
+    let re = Regex::new(pattern).ok()?;
+    re.captures(text)
+        .map(|mat| mat.map(|l| l.get(capture_idx as usize)))
+        .ok()?
         .flatten()
-        .map(|l| l.as_str().to_string()))
+        .map(|l| l.as_str().to_string())
 }
 
 pub fn rfc2822_to_date(input: &str) -> Result<String> {
@@ -59,20 +52,6 @@ impl DBClient {
         }
 
         db.create_scalar_function(
-            "regex_extract",
-            2,
-            rusqlite::functions::FunctionFlags::SQLITE_UTF8,
-            move |ctx| {
-                let pattern = ctx.get::<String>(0)?;
-                let text = ctx.get::<String>(1)?;
-                match regex_extract(&pattern, &text) {
-                    Ok(Some(result)) => Ok(result),
-                    Ok(None) => Ok("".to_string()), // Return an empty string if no match is found
-                    Err(e) => Err(rusqlite::Error::UserFunctionError(e.into())),
-                }
-            },
-        )?;
-        db.create_scalar_function(
             "regex_capture",
             3,
             rusqlite::functions::FunctionFlags::SQLITE_UTF8,
@@ -81,9 +60,8 @@ impl DBClient {
                 let text = ctx.get::<String>(1)?;
                 let capture_idx = ctx.get::<i32>(2)?;
                 match regex_capture(&pattern, &text, capture_idx) {
-                    Ok(Some(result)) => Ok(result),
-                    Ok(None) => Ok("".to_string()), // Return an empty string if no match is found
-                    Err(e) => Err(rusqlite::Error::UserFunctionError(e.into())),
+                    Some(result) => Ok(result),
+                    None => Ok("".to_string()), // Return an empty string if no match is found
                 }
             },
         )?;
@@ -94,8 +72,7 @@ impl DBClient {
             rusqlite::functions::FunctionFlags::SQLITE_UTF8,
             move |ctx| {
                 let datetime_str = ctx.get::<String>(0)?;
-                rfc2822_to_date(&datetime_str)
-                    .map_err(|e| rusqlite::Error::UserFunctionError(e.into()))
+                Ok(rfc2822_to_date(&datetime_str).unwrap_or("".to_owned()))
             },
         )?;
 
