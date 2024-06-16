@@ -1,9 +1,10 @@
-use std::{char, str::FromStr};
+use std::{any, char, str::FromStr};
 
 use crate::{
     imap_op::search::{ReturnOptions, SearchKeys, SequenceSet},
     parsing::{self, imap::SearchArgs},
     smtp_common::Mail,
+    utils,
 };
 use anyhow::{anyhow, Context, Result};
 use chrono::FixedOffset;
@@ -468,9 +469,24 @@ impl DBClient {
         // println!("test_result: {}", fmt_result);
         Ok(fmt_result)
     }
+    ///fetches the raw data from the requested sequenceset nums
+    pub fn fetch(&self, sequence_set: SequenceSet) -> Result<Vec<String>> {
+        let (sql_str, values) = utils::sequence_set_to_sql(sequence_set, "seqnum");
+        let values = values
+            .iter()
+            .flat_map(|i| value_to_param(i))
+            .collect::<Vec<_>>();
+        let sql_statement = format!("SELECT data FROM mail WHERE {}", sql_str);
+        let mut stmt = self.db.prepare(&sql_statement)?;
+        //NOTE: if one row.get() fails, the whole thing fails
+        let result = stmt
+            .query_map(values.as_slice(), |row| Ok(row.get::<_, String>(0)?))?
+            .map(|i| i.map_err(|e| e.into()))
+            .collect::<Result<Vec<String>>>();
+        result
+    }
 }
 
-//NOTE rethink this
 #[repr(u8)]
 #[derive(Debug, Clone)]
 pub enum IMAPFlags {

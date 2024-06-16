@@ -301,7 +301,6 @@ Subject: test";
 
         let matches =
             crate::database::regex_capture(imap_op::search::DATE_HEADER_REGEX, test_string, 1)
-                .unwrap()
                 .unwrap();
         let parsed_date = crate::database::rfc2822_to_date(&matches).unwrap();
         let naivedate = chrono::NaiveDate::from_ymd_opt(2024, 1, 1)
@@ -315,12 +314,7 @@ Subject: test";
                 Ok(i.get::<_, i32>(0).unwrap())
             })
             .unwrap();
-        for row in rows {
-            dbg!(row.unwrap());
-        }
-        // println!(
-        //     "matches: {}, date: {}, naivedate: {}",
-        //     matches, parsed_date, naivedate
-        // )
+        let rows = rows.flatten().collect::<Vec<_>>();
+        assert_eq!(rows[0], 1);
     }
 }

@@ -2,8 +2,12 @@ use std::{mem, str::FromStr};
 
 use anyhow::{anyhow, Context, Result};
 use hickory_resolver::config::{ResolverConfig, ResolverOpts};
+use libsql_client::{args, Value};
 
-use crate::{database::IMAPFlags, imap_op::search::SearchKeys};
+use crate::{
+    database::IMAPFlags,
+    imap_op::search::{SearchKeys, Sequence, SequenceSet},
+};
 
 pub const DECODER: base64::engine::GeneralPurpose = base64::engine::GeneralPurpose::new(
     &base64::alphabet::STANDARD,
@@ -63,4 +67,31 @@ pub fn seperate_login(input: Vec<u8>) -> Result<(String, String)> {
     let password_b = strings.next().ok_or(anyhow::anyhow!("no password"))?;
     let password = String::from_utf8(password_b.to_vec())?;
     Ok((usrname, password))
+}
+
+pub fn sequence_set_to_sql(input: SequenceSet, column_name: &str) -> (String, Vec<Value>) {
+    let mut final_str = String::from("(");
+    let mut final_args = vec![];
+    for (i, val) in input.sequences.iter().enumerate() {
+        let (new_str, new_arg) = match val {
+            Sequence::Int(i) => (format!("{} = ?", column_name), args!(*i).to_vec()),
+            //idk
+            Sequence::RangeFull => ("1 = 1".to_string(), args!().to_vec()),
+            Sequence::RangeTo(r) => (format!("{} <= ?", column_name), args!(r.end).to_vec()),
+            Sequence::RangeFrom(r) => (format!("{column_name} >= ?"), args!(r.start).to_vec()),
+            Sequence::Range(r) => (
+                format!("({column_name} <= ? AND {column_name} >= ?)"),
+                args!(*r.end(), *r.start()).to_vec(),
+            ),
+        };
+        final_str.push_str(&new_str);
+        final_args.extend(new_arg);
+        if i != input.sequences.len() - 1 {
+            final_str.push_str(" OR ");
+        } else {
+            final_str.push(')');
+        }
+    }
+
+    (final_str, final_args)
 }

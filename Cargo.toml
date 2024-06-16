@@ -16,6 +16,7 @@ functions = "0.1.0"
 hickory-resolver = "0.24.0"
 # need to update someday
 libsql-client = { version = "0.33.4", default-features = false, features = ["local_backend", "reqwest_backend"] }
+mailparse = "0.15.0"
 nom = "7.1.3"
 reqwest = { version = "0.12.2", features = ["json"] }
 rusqlite = { version = "0.31.0", features = ["load_extension", "functions", "chrono"] }

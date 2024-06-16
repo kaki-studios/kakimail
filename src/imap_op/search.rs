@@ -18,6 +18,7 @@ use crate::database::IMAPFlags;
 use crate::imap::IMAPState;
 use crate::imap::ResponseInfo;
 use crate::parsing;
+use crate::utils;
 use crate::{
     database::DBClient,
     imap::{self, IMAPOp},
@@ -306,32 +307,7 @@ impl SearchKeys {
                 //regex god
                 args!(format!(".*To: .*{}.*", s)).to_vec(),
             ),
-            SearchKeys::SequenceSet(s) => {
-                let mut final_str = String::from("(");
-                let mut final_args = vec![];
-                for (i, val) in s.sequences.iter().enumerate() {
-                    let (new_str, new_arg) = match val {
-                        Sequence::Int(i) => ("seqnum = ?", args!(*i).to_vec()),
-                        //idk
-                        Sequence::RangeFull => ("1", args!().to_vec()),
-                        Sequence::RangeTo(r) => ("seqnum <= ?", args!(r.end).to_vec()),
-                        Sequence::RangeFrom(r) => ("seqnum >= ?", args!(r.start).to_vec()),
-                        Sequence::Range(r) => (
-                            "(seqnum <= ? AND seqnum >= ?)",
-                            args!(*r.end(), *r.start()).to_vec(),
-                        ),
-                    };
-                    final_str.push_str(new_str);
-                    final_args.extend(new_arg);
-                    if i != s.sequences.len() - 1 {
-                        final_str.push_str(" OR ");
-                    } else {
-                        final_str.push(')');
-                    }
-                }
-
-                (final_str, final_args)
-            }
+            SearchKeys::SequenceSet(s) => utils::sequence_set_to_sql(s.clone(), "seqnum"),
             SearchKeys::Bcc(s) => (
                 "data REGEXP ?".to_string(),
                 args!(format!(".*Bcc: .*{}.*", s)).to_vec(),
@@ -389,31 +365,7 @@ impl SearchKeys {
                 )
             }
 
-            SearchKeys::Uid(s) => {
-                let mut final_str = String::from("(");
-                let mut final_args = vec![];
-                for (i, val) in s.sequences.iter().enumerate() {
-                    let (new_str, new_arg) = match val {
-                        Sequence::Int(i) => ("uid = ?", args!(*i).to_vec()),
-                        Sequence::RangeFull => ("1", args!().to_vec()),
-                        Sequence::RangeTo(r) => ("uid <= ?", args!(r.end).to_vec()),
-                        Sequence::RangeFrom(r) => ("uid >= ?", args!(r.start).to_vec()),
-                        Sequence::Range(r) => (
-                            "(uid <= ? AND uid >= ?)",
-                            args!(*r.end(), *r.start()).to_vec(),
-                        ),
-                    };
-                    final_str.push_str(new_str);
-                    final_args.extend(new_arg);
-                    if i != s.sequences.len() - 1 {
-                        final_str.push_str(" OR ");
-                    } else {
-                        final_str.push(')');
-                    }
-                }
-
-                (final_str, final_args)
-            }
+            SearchKeys::Uid(s) => utils::sequence_set_to_sql(s.clone(), "uid"),
             SearchKeys::Subject(s) => (
                 "data REGEXP ?".to_string(),
                 args!(format!(".*Subject: .*{}.*", s)).to_vec(),
