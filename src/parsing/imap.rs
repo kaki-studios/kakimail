@@ -1,20 +1,16 @@
-//only temoporary
-#![allow(unused)]
-
 use std::str::FromStr;
 
-use anyhow::anyhow;
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_until, take_while},
-    character::complete::{alpha1, char, digit1, multispace1},
+    bytes::complete::{tag, take_till, take_while},
+    character::complete::{alpha1, char, digit1},
+    combinator::{map_res, opt, rest},
     multi::{separated_list0, separated_list1},
-    number::complete::le_u32,
-    sequence::{delimited, tuple},
+    sequence::{delimited, pair, tuple},
     IResult,
 };
 
-use crate::imap_op::search::{ReturnOptions, SearchKeys, Sequence, SequenceSet};
+use crate::imap_op::search::{ReturnOptions, SearchKeys};
 
 //NOTE this code has taken inspiration from: https://github.com/djc/tokio-imap/blob/main/imap-proto/src/parser/core.rs
 
@@ -189,13 +185,75 @@ impl From<&str> for Mailbox {
 pub fn mailbox(input: &str) -> IResult<&str, Mailbox> {
     nom::combinator::map(quoted, Mailbox::from)(input)
 }
+pub fn fetch_args(args: &str) -> IResult<&str, Vec<FetchArgs>> {
+    let mut x = delimited(
+        opt(tag::<&str, &str, nom::error::Error<&str>>("(")),
+        separated_list0(char(' '), alt((take_till(|i| i == ' ' || i == ')'), rest))),
+        opt(tag(")")),
+    );
+    let result = x(args)?
+        .1
+        .iter()
+        .map(|i| *i)
+        .flat_map(FetchArgs::from_str)
+        .map(|i| i.1)
+        .collect::<Vec<_>>();
+    dbg!(result);
+
+    Ok(("", vec![]))
+}
+
+#[derive(Debug)]
+pub enum FetchArgs {
+    Binary(Vec<i32>, Option<(i32, i32)>),
+    BinaryPeek(Vec<i32>, Option<(i32, i32)>),
+    BinarySize(Vec<i32>),
+    BodyNoArgs,
+    Body(Vec<i32>, Option<(i32, i32)>),
+    BodyPeek(Vec<i32>, Option<(i32, i32)>),
+    BodyStructure,
+    Envelope,
+    Flags,
+    InternalDate,
+    RFC822Size,
+    Uid,
+}
+
+impl FetchArgs {
+    fn from_str(s: &str) -> IResult<&str, Self> {
+        let mut word_parser = alt((
+            take_till(|i| i == '['),
+            rest::<&str, nom::error::Error<&str>>,
+        ));
+        let (rest1, word) = word_parser(s)?;
+        let result = match word.to_lowercase().as_str() {
+            "binary" => {
+                let section_parser = separated_list1(
+                    tag::<&str, &str, nom::error::Error<&str>>("."),
+                    map_res(digit1, str::parse::<i32>),
+                );
+                let mut section_binary_parser = delimited(char('['), section_parser, char(']'));
+                let partial_parser = nom::sequence::separated_pair(
+                    map_res(digit1, str::parse::<i32>),
+                    char('.'),
+                    map_res(digit1, str::parse::<i32>),
+                );
+                let partial_parser_full = delimited(char('<'), partial_parser, char('>'));
+                let mut full_parser = tuple((&mut section_binary_parser, opt(partial_parser_full)));
+                let (rest, list) = full_parser(rest1)?;
+                (rest, FetchArgs::Binary(list.0, list.1))
+            }
+            _ => ("", FetchArgs::Uid),
+        };
+        Ok(result)
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
 
     use crate::{
-        database,
         imap_op::{
             self,
             search::{self, Sequence},
@@ -206,7 +264,8 @@ mod tests {
         },
     };
 
-    use super::{search, SequenceSet};
+    use super::{fetch_args, search};
+    use crate::imap_op::search::SequenceSet;
 
     #[test]
     fn test_literal() {
@@ -316,5 +375,10 @@ Subject: test";
             .unwrap();
         let rows = rows.flatten().collect::<Vec<_>>();
         assert_eq!(rows[0], 1);
+    }
+    #[test]
+    fn test_fetch() {
+        fetch_args("(BINARY[1.2]<5.10> UID)").unwrap();
+        fetch_args("BODY[]").unwrap();
     }
 }
