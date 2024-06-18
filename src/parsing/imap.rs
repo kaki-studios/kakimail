@@ -1,5 +1,7 @@
 use std::str::FromStr;
 
+use anyhow::{anyhow, Context};
+use hickory_resolver::proto::serialize::binary::RestrictedMath;
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_till, take_while},
@@ -7,7 +9,7 @@ use nom::{
     combinator::{map, map_res, opt, rest},
     multi::{separated_list0, separated_list1},
     sequence::{delimited, pair, preceded, tuple},
-    IResult,
+    Finish, IResult,
 };
 
 use crate::imap_op::search::{ReturnOptions, SearchKeys};
@@ -195,19 +197,13 @@ pub fn fetch_args(args: &str) -> IResult<&str, Vec<FetchArgs>> {
     //     Macro equivalent to: (FLAGS INTERNALDATE RFC822.SIZE ENVELOPE BODY)
     let mut x = delimited(
         opt(tag::<&str, &str, nom::error::Error<&str>>("(")),
-        separated_list0(char(' '), alt((take_till(|i| i == ' ' || i == ')'), rest))),
+        separated_list0(char(' '), FetchArgs::from_str),
         opt(tag(")")),
     );
-    let result = x(args)?
-        .1
-        .iter()
-        .map(|i| *i)
-        .flat_map(FetchArgs::from_str)
-        .map(|i| i.1)
-        .collect::<Vec<_>>();
-    dbg!(result);
+    let result = x(args)?;
+    // dbg!(&result);
 
-    Ok(("", vec![]))
+    Ok(result)
 }
 
 #[derive(Debug)]
@@ -216,7 +212,7 @@ pub enum FetchArgs {
     BinaryPeek(Vec<i32>, Option<(i32, i32)>),
     BinarySize(Vec<i32>),
     BodyNoArgs,
-    Body(Vec<i32>, Option<(i32, i32)>),
+    Body(SectionSpec, Option<(i32, i32)>),
     BodyPeek(Vec<i32>, Option<(i32, i32)>),
     BodyStructure,
     Envelope,
@@ -229,14 +225,15 @@ pub enum FetchArgs {
 impl FetchArgs {
     fn from_str(s: &str) -> IResult<&str, Self> {
         let mut word_parser = alt((
-            take_till(|i| i == '['),
+            take_while(|c: char| c.is_alphabetic() || c == '.'),
             rest::<&str, nom::error::Error<&str>>,
         ));
 
         let (arg_rest, word) = word_parser(s)?;
+        dbg!(&word, &arg_rest);
 
         //common parsers
-        let section_part_parser = separated_list1(
+        let section_part_parser = separated_list0(
             tag::<&str, &str, nom::error::Error<&str>>("."),
             map_res(digit1, str::parse::<i32>),
         );
@@ -265,13 +262,99 @@ impl FetchArgs {
             }
             "body" if arg_rest.is_empty() => ("", FetchArgs::BodyNoArgs),
             "body" => {
-                //TODO: make new enum "Section" and parse `arg_rest` into Vec<Section>
-                ("", FetchArgs::Uid)
+                //TODO fix
+                let mut parser = tuple((
+                    delimited(char('['), SectionSpec::from_str, char(']')),
+                    opt(partial_parser_full),
+                ));
+                let (rest, result) = parser(arg_rest)?;
+                (rest, FetchArgs::Body(result.0, result.1))
             }
 
-            _ => ("", FetchArgs::Uid),
+            _ => (arg_rest, FetchArgs::Uid),
         };
+        dbg!(&result.0);
+        println!("-----------------");
         Ok(result)
+    }
+}
+
+#[derive(Debug)]
+pub enum SectionSpec {
+    MsgText(SectionMsgText),
+    Other(Vec<i32>, Option<SectionText>),
+}
+fn other_parser(
+    s: &str,
+) -> Result<(&str, (Vec<i32>, Option<&str>)), nom::Err<nom::error::Error<&str>>> {
+    tuple((
+        separated_list0(
+            char::<&str, nom::error::Error<&str>>('.'),
+            map_res(digit1, str::parse::<i32>),
+        ),
+        opt(preceded(char('.'), rest)),
+    ))(s)
+}
+
+impl SectionSpec {
+    pub fn from_str(s: &str) -> IResult<&str, Self> {
+        if let Ok(x) = SectionMsgText::from_str(s) {
+            return Ok(("", SectionSpec::MsgText(x)));
+        }
+        let (list, end) = other_parser(s)?.1;
+        let end = end.and_then(|i| SectionText::from_str(i).ok());
+        Ok(("", SectionSpec::Other(list, end)))
+    }
+}
+
+#[derive(Debug)]
+pub enum SectionText {
+    Mime,
+    MsgText(SectionMsgText),
+}
+
+impl FromStr for SectionText {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "MIME" {
+            Ok(SectionText::Mime)
+        } else {
+            let msgtext = SectionMsgText::from_str(s)?;
+            Ok(SectionText::MsgText(msgtext))
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum SectionMsgText {
+    Header,
+    HeaderFields(Vec<String>),
+    HeaderFieldsNot(Vec<String>),
+    Text,
+}
+
+impl FromStr for SectionMsgText {
+    type Err = anyhow::Error;
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        if input == "TEXT" {
+            return Ok(SectionMsgText::Text);
+        } else if input == "HEADER" {
+            return Ok(SectionMsgText::Header);
+        }
+        let (start, nums_str) = input.split_once(" ").context("should have space")?;
+        let nums = nums_str
+            .strip_prefix("(")
+            .context("must happen")?
+            .strip_suffix(")")
+            .context("must happen")?
+            .split(" ")
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        if start.contains("NOT") {
+            Ok(SectionMsgText::HeaderFieldsNot(nums))
+        } else {
+            Ok(SectionMsgText::HeaderFields(nums))
+        }
     }
 }
 
@@ -290,7 +373,7 @@ mod tests {
         },
     };
 
-    use super::{fetch_args, search};
+    use super::{fetch_args, search, FetchArgs};
     use crate::imap_op::search::SequenceSet;
 
     #[test]
@@ -406,5 +489,6 @@ Subject: test";
     fn test_fetch() {
         fetch_args("(BINARY[1.2]<5.10> UID)").unwrap();
         fetch_args("BODY[]").unwrap();
+        fetch_args("BODY[HEADER.FIELDS (SUBJECT)]").unwrap();
     }
 }
