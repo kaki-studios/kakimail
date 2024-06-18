@@ -4,9 +4,9 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take_till, take_while},
     character::complete::{alpha1, char, digit1},
-    combinator::{map_res, opt, rest},
+    combinator::{map, map_res, opt, rest},
     multi::{separated_list0, separated_list1},
-    sequence::{delimited, pair, tuple},
+    sequence::{delimited, pair, preceded, tuple},
     IResult,
 };
 
@@ -186,6 +186,13 @@ pub fn mailbox(input: &str) -> IResult<&str, Mailbox> {
     nom::combinator::map(quoted, Mailbox::from)(input)
 }
 pub fn fetch_args(args: &str) -> IResult<&str, Vec<FetchArgs>> {
+    //TODO: support macros:
+    // ALL
+    //     Macro equivalent to: (FLAGS INTERNALDATE RFC822.SIZE ENVELOPE)
+    // FAST
+    //     Macro equivalent to: (FLAGS INTERNALDATE RFC822.SIZE)
+    // FULL
+    //     Macro equivalent to: (FLAGS INTERNALDATE RFC822.SIZE ENVELOPE BODY)
     let mut x = delimited(
         opt(tag::<&str, &str, nom::error::Error<&str>>("(")),
         separated_list0(char(' '), alt((take_till(|i| i == ' ' || i == ')'), rest))),
@@ -225,24 +232,43 @@ impl FetchArgs {
             take_till(|i| i == '['),
             rest::<&str, nom::error::Error<&str>>,
         ));
-        let (rest1, word) = word_parser(s)?;
+
+        let (arg_rest, word) = word_parser(s)?;
+
+        //common parsers
+        let section_part_parser = separated_list1(
+            tag::<&str, &str, nom::error::Error<&str>>("."),
+            map_res(digit1, str::parse::<i32>),
+        );
+        let mut section_binary_parser = delimited(char('['), section_part_parser, char(']'));
+
+        let partial_parser = nom::sequence::separated_pair(
+            map_res(digit1, str::parse::<i32>),
+            char('.'),
+            map_res(digit1, str::parse::<i32>),
+        );
+        let partial_parser_full = delimited(char('<'), partial_parser, char('>'));
+
         let result = match word.to_lowercase().as_str() {
-            "binary" => {
-                let section_parser = separated_list1(
-                    tag::<&str, &str, nom::error::Error<&str>>("."),
-                    map_res(digit1, str::parse::<i32>),
-                );
-                let mut section_binary_parser = delimited(char('['), section_parser, char(']'));
-                let partial_parser = nom::sequence::separated_pair(
-                    map_res(digit1, str::parse::<i32>),
-                    char('.'),
-                    map_res(digit1, str::parse::<i32>),
-                );
-                let partial_parser_full = delimited(char('<'), partial_parser, char('>'));
+            x if x == "binary" || x == "binary.peek" => {
                 let mut full_parser = tuple((&mut section_binary_parser, opt(partial_parser_full)));
-                let (rest, list) = full_parser(rest1)?;
-                (rest, FetchArgs::Binary(list.0, list.1))
+                let (rest, list) = full_parser(arg_rest)?;
+                if x == "binary" {
+                    (rest, FetchArgs::Binary(list.0, list.1))
+                } else {
+                    (rest, FetchArgs::BinaryPeek(list.0, list.1))
+                }
             }
+            "binary.size" => {
+                let (rest, list) = section_binary_parser(arg_rest)?;
+                (rest, FetchArgs::BinarySize(list))
+            }
+            "body" if arg_rest.is_empty() => ("", FetchArgs::BodyNoArgs),
+            "body" => {
+                //TODO: make new enum "Section" and parse `arg_rest` into Vec<Section>
+                ("", FetchArgs::Uid)
+            }
+
             _ => ("", FetchArgs::Uid),
         };
         Ok(result)
