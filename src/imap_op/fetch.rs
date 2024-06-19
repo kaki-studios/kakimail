@@ -1,10 +1,12 @@
 use std::str::FromStr;
 
 use anyhow::{anyhow, Context};
+use mailparse::MailHeaderMap;
 
-use crate::imap::{IMAPOp, IMAPState};
-
-use super::search::SequenceSet;
+use crate::{
+    imap::{IMAPOp, IMAPState},
+    parsing::{self},
+};
 
 pub struct Fetch;
 
@@ -22,18 +24,25 @@ impl IMAPOp for Fetch {
         let IMAPState::Selected(_user) = state else {
             return Err(anyhow!("wrong state"));
         };
-        let (sequence_set_str, rest) = args
-            .split_once(" ")
-            .context(anyhow!("should always work"))?;
-        let sequence_set = SequenceSet::from_str(sequence_set_str)?;
-        let mail_list = db.lock().await.fetch(sequence_set)?;
-        let parsed_mail_list = mail_list
+        let (sequence_set, fetch_args) = parsing::imap::fetch(args)?;
+        let mail = db.lock().await.fetch(sequence_set)?;
+        let parsed_mail: Vec<_> = mail
             .iter()
-            .flat_map(|mail| mailparse::parse_mail(mail.as_bytes()))
-            .collect::<Vec<_>>();
-        //TODO
-        //parse `rest` into fetch args, get info from parsed_mail_list as appropriate, then return
-        //fetched info
+            .map(String::as_bytes)
+            .flat_map(mailparse::parse_mail)
+            .collect();
+        let mut _final_vec: Vec<String> = vec![];
+        for item in &fetch_args {
+            for mail in &parsed_mail {
+                match item {
+                    //example
+                    //TODO:
+                    //match the item, then extract info from parse_mail accordingly, format as
+                    //String, add to a vec
+                    _ => mail.get_headers().get_first_header("Date"),
+                };
+            }
+        }
 
         Err(anyhow!("not implemented"))
     }

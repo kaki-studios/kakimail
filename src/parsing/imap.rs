@@ -1,18 +1,16 @@
 use std::str::FromStr;
 
-use anyhow::{anyhow, Context};
-use hickory_resolver::proto::serialize::binary::RestrictedMath;
 use nom::{
     branch::alt,
-    bytes::complete::{is_not, tag, take_till, take_while},
+    bytes::complete::{is_not, tag, take_until, take_while},
     character::complete::{alpha1, char, digit1},
     combinator::{map, map_res, opt, rest},
     multi::{separated_list0, separated_list1},
-    sequence::{delimited, pair, preceded, tuple},
-    Finish, IResult,
+    sequence::{delimited, preceded, separated_pair, tuple},
+    IResult,
 };
 
-use crate::imap_op::search::{ReturnOptions, SearchKeys};
+use crate::imap_op::search::{ReturnOptions, SearchKeys, SequenceSet};
 
 //NOTE this code has taken inspiration from: https://github.com/djc/tokio-imap/blob/main/imap-proto/src/parser/core.rs
 
@@ -187,21 +185,38 @@ impl From<&str> for Mailbox {
 pub fn mailbox(input: &str) -> IResult<&str, Mailbox> {
     nom::combinator::map(quoted, Mailbox::from)(input)
 }
+
+pub fn fetch(
+    input: &str,
+) -> Result<(SequenceSet, Vec<FetchArgs>), nom::Err<nom::error::Error<String>>> {
+    let (_, (start, args)) = separated_pair(
+        take_until(" "),
+        char::<&str, nom::error::Error<&str>>(' '),
+        rest,
+    )(input)
+    //wtf is this
+    .map_err(|e| e.map(|e2| nom::error::Error::new(e2.input.to_string(), e2.code)))?;
+    match (SequenceSet::from_str(start), fetch_args(args)) {
+        (Ok(x), Ok(y)) => Ok((x, y.1)),
+        (_, _) => Err(nom::Err::Failure(nom::error::Error::new(
+            "bad input".to_owned(),
+            nom::error::ErrorKind::Fail,
+        ))),
+    }
+}
 pub fn fetch_args(args: &str) -> IResult<&str, Vec<FetchArgs>> {
-    //TODO: support macros:
-    // ALL
-    //     Macro equivalent to: (FLAGS INTERNALDATE RFC822.SIZE ENVELOPE)
-    // FAST
-    //     Macro equivalent to: (FLAGS INTERNALDATE RFC822.SIZE)
-    // FULL
-    //     Macro equivalent to: (FLAGS INTERNALDATE RFC822.SIZE ENVELOPE BODY)
-    let mut x = delimited(
+    let args = match args {
+        "ALL" => "(FLAGS INTERNALDATE RFC822.SIZE ENVELOPE)",
+        "FAST" => "(FLAGS INTERNALDATE RFC822.SIZE)",
+        "FULL" => "(FLAGS INTERNALDATE RFC822.SIZE ENVELOPE BODY)",
+        other => other,
+    };
+    let mut parser = delimited(
         opt(tag::<&str, &str, nom::error::Error<&str>>("(")),
         separated_list0(char(' '), FetchArgs::from_str),
         opt(tag(")")),
     );
-    let result = x(args)?;
-    // dbg!(&result);
+    let result = parser(args)?;
 
     Ok(result)
 }
@@ -223,7 +238,7 @@ pub enum FetchArgs {
 }
 
 impl FetchArgs {
-    fn from_str(s: &str) -> IResult<&str, Self> {
+    pub fn from_str(s: &str) -> IResult<&str, Self> {
         let mut word_parser = alt((
             take_while(|c: char| c.is_alphabetic() || c == '.'),
             rest::<&str, nom::error::Error<&str>>,
@@ -262,7 +277,6 @@ impl FetchArgs {
             }
             "body" if arg_rest.starts_with(" ") => (arg_rest, FetchArgs::BodyNoArgs),
             x if x == "body" || x == "body.peek" => {
-                //TODO fix
                 let mut parser = tuple((
                     delimited(char('['), SectionSpec::from_str, char(']')),
                     opt(partial_parser_full),
@@ -313,6 +327,7 @@ fn other_parser(
 
 impl SectionSpec {
     pub fn from_str(s: &str) -> IResult<&str, Self> {
+        // dbg!(&s);
         if let Ok(x) = SectionMsgText::from_str(s) {
             return Ok((x.0, SectionSpec::MsgText(x.1)));
         }
@@ -353,21 +368,29 @@ pub enum SectionMsgText {
 
 impl SectionMsgText {
     pub fn from_str(input: &str) -> IResult<&str, Self> {
+        // dbg!(&input);
         let text = tag::<&str, &str, nom::error::Error<&str>>("TEXT")(input);
         if let Ok(x) = text {
             return Ok((x.0, SectionMsgText::Text));
         }
         let rest_parser = delimited(
-            char('('),
+            char::<&str, nom::error::Error<&str>>('('),
             separated_list1(char(' '), map(alpha1, str::to_string)),
             char(')'),
         );
         let mut pair_parser = nom::sequence::separated_pair(is_not(" "), char(' '), rest_parser);
-        let (rest, (start, nums_str)) = pair_parser(input)?;
-        if start.contains("NOT") {
-            Ok((rest, SectionMsgText::HeaderFieldsNot(nums_str)))
-        } else {
-            Ok((rest, SectionMsgText::HeaderFields(nums_str)))
+        match pair_parser(input) {
+            Ok((rest, (start, nums_str))) => {
+                if start.contains("NOT") {
+                    Ok((rest, SectionMsgText::HeaderFieldsNot(nums_str)))
+                } else {
+                    Ok((rest, SectionMsgText::HeaderFields(nums_str)))
+                }
+            }
+            Err(_) => {
+                let header = tag::<&str, &str, nom::error::Error<&str>>("HEADER")(input)?;
+                return Ok((header.0, SectionMsgText::Header));
+            }
         }
     }
 }
@@ -387,7 +410,7 @@ mod tests {
         },
     };
 
-    use super::{fetch_args, search};
+    use super::{fetch, search};
     use crate::imap_op::search::SequenceSet;
 
     #[test]
@@ -501,16 +524,9 @@ Subject: test";
     }
     #[test]
     fn test_fetch() {
-        println!("{:?}", fetch_args("(BINARY[1.2]<5.10> UID)").unwrap());
-        println!(
-            "{:?}",
-            fetch_args("(BINARY[1.2]<5.10> BODY ENVELOPE)").unwrap()
-        );
-        println!("{:?}", fetch_args("BODY[]").unwrap());
-        println!("{:?}", fetch_args("BODY[HEADER.FIELDS (SUBJECT)]").unwrap());
-        println!(
-            "{:?}",
-            fetch_args("(FLAGS BODY[HEADER.FIELDS (DATE FROM)])").unwrap()
-        );
+        let res = fetch("1:10,15:* (BODY[HEADER] BODY[TEXT])").unwrap();
+        println!("{:?}", res);
+        let res = fetch("0:5,8:10 (BODY[2.HEADER] BODYSTRUCTURE)").unwrap();
+        println!("{:?}", res);
     }
 }
