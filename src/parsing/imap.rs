@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context};
 use hickory_resolver::proto::serialize::binary::RestrictedMath;
 use nom::{
     branch::alt,
-    bytes::complete::{tag, take_till, take_while},
+    bytes::complete::{is_not, tag, take_till, take_while},
     character::complete::{alpha1, char, digit1},
     combinator::{map, map_res, opt, rest},
     multi::{separated_list0, separated_list1},
@@ -213,7 +213,7 @@ pub enum FetchArgs {
     BinarySize(Vec<i32>),
     BodyNoArgs,
     Body(SectionSpec, Option<(i32, i32)>),
-    BodyPeek(Vec<i32>, Option<(i32, i32)>),
+    BodyPeek(SectionSpec, Option<(i32, i32)>),
     BodyStructure,
     Envelope,
     Flags,
@@ -230,7 +230,7 @@ impl FetchArgs {
         ));
 
         let (arg_rest, word) = word_parser(s)?;
-        dbg!(&word, &arg_rest);
+        // dbg!(&word, &arg_rest);
 
         //common parsers
         let section_part_parser = separated_list0(
@@ -260,21 +260,36 @@ impl FetchArgs {
                 let (rest, list) = section_binary_parser(arg_rest)?;
                 (rest, FetchArgs::BinarySize(list))
             }
-            "body" if arg_rest.is_empty() => ("", FetchArgs::BodyNoArgs),
-            "body" => {
+            "body" if arg_rest.starts_with(" ") => (arg_rest, FetchArgs::BodyNoArgs),
+            x if x == "body" || x == "body.peek" => {
                 //TODO fix
                 let mut parser = tuple((
                     delimited(char('['), SectionSpec::from_str, char(']')),
                     opt(partial_parser_full),
                 ));
                 let (rest, result) = parser(arg_rest)?;
-                (rest, FetchArgs::Body(result.0, result.1))
+                if x == "body" {
+                    (rest, FetchArgs::Body(result.0, result.1))
+                } else {
+                    (rest, FetchArgs::BodyPeek(result.0, result.1))
+                }
             }
+            "bodystructure" => (arg_rest, FetchArgs::BodyStructure),
+            "envelope" => (arg_rest, FetchArgs::Envelope),
+            "flags" => (arg_rest, FetchArgs::Flags),
+            "internaldate" => (arg_rest, FetchArgs::InternalDate),
+            "rfc822.size" => (arg_rest, FetchArgs::RFC822Size),
+            "uid" => (arg_rest, FetchArgs::Uid),
 
-            _ => (arg_rest, FetchArgs::Uid),
+            _ => {
+                return Err(nom::Err::Failure(nom::error::Error::new(
+                    s,
+                    nom::error::ErrorKind::Fail,
+                )))
+            }
         };
-        dbg!(&result.0);
-        println!("-----------------");
+        // dbg!(&result);
+        // println!("--------------");
         Ok(result)
     }
 }
@@ -299,11 +314,15 @@ fn other_parser(
 impl SectionSpec {
     pub fn from_str(s: &str) -> IResult<&str, Self> {
         if let Ok(x) = SectionMsgText::from_str(s) {
-            return Ok(("", SectionSpec::MsgText(x)));
+            return Ok((x.0, SectionSpec::MsgText(x.1)));
         }
-        let (list, end) = other_parser(s)?.1;
+        let (rest, (list, end)) = other_parser(s)?;
         let end = end.and_then(|i| SectionText::from_str(i).ok());
-        Ok(("", SectionSpec::Other(list, end)))
+        if let Some((x, res)) = end {
+            Ok((x, SectionSpec::Other(list, Some(res))))
+        } else {
+            Ok((rest, SectionSpec::Other(list, None)))
+        }
     }
 }
 
@@ -313,14 +332,13 @@ pub enum SectionText {
     MsgText(SectionMsgText),
 }
 
-impl FromStr for SectionText {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s == "MIME" {
-            Ok(SectionText::Mime)
+impl SectionText {
+    pub fn from_str(s: &str) -> IResult<&str, Self> {
+        if let Ok(x) = tag::<&str, &str, nom::error::Error<&str>>("MIME")(s) {
+            Ok((x.0, SectionText::Mime))
         } else {
-            let msgtext = SectionMsgText::from_str(s)?;
-            Ok(SectionText::MsgText(msgtext))
+            let (rest, msgtext) = SectionMsgText::from_str(s)?;
+            Ok((rest, SectionText::MsgText(msgtext)))
         }
     }
 }
@@ -333,27 +351,23 @@ pub enum SectionMsgText {
     Text,
 }
 
-impl FromStr for SectionMsgText {
-    type Err = anyhow::Error;
-    fn from_str(input: &str) -> Result<Self, Self::Err> {
-        if input == "TEXT" {
-            return Ok(SectionMsgText::Text);
-        } else if input == "HEADER" {
-            return Ok(SectionMsgText::Header);
+impl SectionMsgText {
+    pub fn from_str(input: &str) -> IResult<&str, Self> {
+        let text = tag::<&str, &str, nom::error::Error<&str>>("TEXT")(input);
+        if let Ok(x) = text {
+            return Ok((x.0, SectionMsgText::Text));
         }
-        let (start, nums_str) = input.split_once(" ").context("should have space")?;
-        let nums = nums_str
-            .strip_prefix("(")
-            .context("must happen")?
-            .strip_suffix(")")
-            .context("must happen")?
-            .split(" ")
-            .map(ToString::to_string)
-            .collect::<Vec<_>>();
+        let rest_parser = delimited(
+            char('('),
+            separated_list1(char(' '), map(alpha1, str::to_string)),
+            char(')'),
+        );
+        let mut pair_parser = nom::sequence::separated_pair(is_not(" "), char(' '), rest_parser);
+        let (rest, (start, nums_str)) = pair_parser(input)?;
         if start.contains("NOT") {
-            Ok(SectionMsgText::HeaderFieldsNot(nums))
+            Ok((rest, SectionMsgText::HeaderFieldsNot(nums_str)))
         } else {
-            Ok(SectionMsgText::HeaderFields(nums))
+            Ok((rest, SectionMsgText::HeaderFields(nums_str)))
         }
     }
 }
@@ -373,7 +387,7 @@ mod tests {
         },
     };
 
-    use super::{fetch_args, search, FetchArgs};
+    use super::{fetch_args, search};
     use crate::imap_op::search::SequenceSet;
 
     #[test]
@@ -487,8 +501,16 @@ Subject: test";
     }
     #[test]
     fn test_fetch() {
-        fetch_args("(BINARY[1.2]<5.10> UID)").unwrap();
-        fetch_args("BODY[]").unwrap();
-        fetch_args("BODY[HEADER.FIELDS (SUBJECT)]").unwrap();
+        println!("{:?}", fetch_args("(BINARY[1.2]<5.10> UID)").unwrap());
+        println!(
+            "{:?}",
+            fetch_args("(BINARY[1.2]<5.10> BODY ENVELOPE)").unwrap()
+        );
+        println!("{:?}", fetch_args("BODY[]").unwrap());
+        println!("{:?}", fetch_args("BODY[HEADER.FIELDS (SUBJECT)]").unwrap());
+        println!(
+            "{:?}",
+            fetch_args("(FLAGS BODY[HEADER.FIELDS (DATE FROM)])").unwrap()
+        );
     }
 }
