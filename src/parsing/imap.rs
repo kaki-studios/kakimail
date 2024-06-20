@@ -399,6 +399,8 @@ impl SectionMsgText {
 mod tests {
     use std::str::FromStr;
 
+    use chrono::DateTime;
+
     use crate::{
         imap_op::{
             self,
