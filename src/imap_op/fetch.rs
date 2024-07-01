@@ -1,7 +1,4 @@
-use std::str::FromStr;
-
-use anyhow::{anyhow, Context};
-use mailparse::MailHeaderMap;
+use anyhow::anyhow;
 
 use crate::{
     imap::{IMAPOp, IMAPState},
@@ -41,36 +38,46 @@ pub(crate) async fn fetch_or_uid(
     };
     let (sequence_set, fetch_args) = parsing::imap::fetch(args)?;
     //the most cursed type ever
-    let (uid, (date, (mail, flags))): (Vec<_>, (Vec<_>, (Vec<_>, Vec<_>))) = db
+    let (seqnums, (uids, (dates, (mail_vec, flags)))): (
+        Vec<_>,
+        (Vec<_>, (Vec<_>, (Vec<_>, Vec<_>))),
+    ) = db
         .lock()
         .await
         .fetch(sequence_set, uid)?
         .iter()
         .cloned()
         .unzip();
-    let parsed_mail: Vec<_> = mail
+    let parsed_mail: Vec<_> = mail_vec
         .iter()
         .map(String::as_bytes)
         .flat_map(mailparse::parse_mail)
         .collect();
+
     let mut _final_vec: Vec<String> = vec![];
-    for item in &fetch_args {
-        for mail in &parsed_mail {
-            match item {
+    for ((((seqnum, uid), date), mail), flag) in seqnums
+        .iter()
+        .zip(uids)
+        .zip(dates)
+        .zip(parsed_mail)
+        .zip(flags)
+    {
+        let mut temp_buf = format!("* {seqnum} FETCH (");
+        for item in &fetch_args {
+            let data = match item {
                 //TODO:
                 //match the item, then extract info from parse_mail accordingly, format as
                 //String, add to a vec
-
-                //example
-                //TODO: change DB_DATETIME_FMT to include timezone offset => "%Y-%m-%d %H:%M:%S%.3f%:z"
-                //and the in database::fetch() return DateTime<FixedOffset> instead of String and
-                //then here format it accordingly
-                FetchArgs::InternalDate => _final_vec.extend(date.clone()),
-                _ => {
-                    mail.get_headers().get_first_header("Date");
+                FetchArgs::InternalDate => {
+                    format!("INTERNALDATE \"{}\"", date.format("%d-%b-%Y %H:%M:%S %z"))
                 }
+                FetchArgs::Uid => format!("UID {uid}"),
+                _ => String::default(),
             };
+            temp_buf.extend(data.chars());
         }
+        temp_buf.extend(")\r\n".chars());
+        _final_vec.push(temp_buf);
     }
 
     Err(anyhow!("not implemented"))

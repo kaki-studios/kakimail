@@ -474,14 +474,17 @@ impl DBClient {
         &self,
         sequence_set: SequenceSet,
         uid: bool,
-        //           uid,  date,    data,   flags
-    ) -> Result<Vec<(i32, (String, (String, String)))>> {
+        //         seqnum, uid,  date,                    data,   flags
+    ) -> Result<Vec<(i32, (i32, (DateTime<FixedOffset>, (String, String))))>> {
         let (sql_str, values) = utils::sequence_set_to_sql(sequence_set, "seqnum");
         let values = values
             .iter()
             .flat_map(|i| value_to_param(i))
             .collect::<Vec<_>>();
-        let sql_statement = format!("SELECT uid, date, data, flags FROM mail WHERE {}", sql_str);
+        let sql_statement = format!(
+            "SELECT seqnum, uid, date, data, flags FROM mail WHERE {}",
+            sql_str
+        );
         let mut stmt = self.db.prepare(&sql_statement)?;
         //NOTE: if one row.get() fails, the whole thing fails
         let result = stmt
@@ -489,13 +492,16 @@ impl DBClient {
                 Ok((
                     row.get::<_, i32>(0)?,
                     (
-                        row.get::<_, String>(1)?,
-                        (row.get::<_, String>(2)?, (row.get::<_, String>(3)?)),
+                        row.get::<_, i32>(1)?,
+                        (
+                            row.get::<_, DateTime<FixedOffset>>(2)?,
+                            (row.get::<_, String>(3)?, (row.get::<_, String>(4)?)),
+                        ),
                     ),
                 ))
             })?
             .map(|i| i.map_err(|e| e.into()))
-            .collect::<Result<Vec<(i32, (String, (String, String)))>>>();
+            .collect::<Result<Vec<(i32, (i32, (DateTime<FixedOffset>, (String, String))))>>>();
 
         result
     }
