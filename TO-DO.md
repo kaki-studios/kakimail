@@ -19,5 +19,7 @@
 - [ ] dmarc, dkim and spf or whatever
 - [ ] parsing with nom (for difficult commands)
     - [X] search
+    - [X] fetch
+- [ ] caching
 
 other stuff?? add here!

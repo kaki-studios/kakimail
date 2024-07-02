@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use mailparse::MailHeaderMap;
 
 use crate::{
     database,
@@ -76,11 +77,36 @@ pub(crate) async fn fetch_or_uid(
                 FetchArgs::Flags => {
                     format!("FLAGS ({}) ", database::db_flag_to_readable_flag(&flag))
                 }
-                _ => String::default(),
+                FetchArgs::RFC822Size => format!("RFC822.SIZE {} ", mail.raw_bytes.len()),
+                FetchArgs::Envelope => {
+                    let headers = mail.get_headers();
+                    let date = headers.get_first_value("Date").unwrap_or("NIL".to_owned());
+                    let subject = headers
+                        .get_first_value("Subject")
+                        .unwrap_or("NIL".to_owned());
+                    let from = headers.get_first_value("From").unwrap_or("NIL".to_owned());
+                    let sender = headers.get_first_value("Sender").unwrap_or(from.clone());
+                    let reply_to = headers.get_first_value("Reply-To").unwrap_or(from.clone());
+                    let to = headers.get_first_value("To").unwrap_or("NIL".to_owned());
+                    let cc = headers.get_first_value("Cc").unwrap_or("NIL".to_owned());
+                    let bcc = headers.get_first_value("Bcc").unwrap_or("NIL".to_owned());
+                    let in_reply_to = headers.get_first_value("In-Reply-To");
+                    let message_id = headers
+                        .get_first_value("Message-ID")
+                        .unwrap_or("NIL".to_owned());
+                    //TODO: parse from, sender, reply-to, to, cc, and bcc fields into parenthesized lists of address structures.
+                    //(check fetch response in rfc)
+                    //others will be strings
+                    //then concat all of them, and done
+
+                    String::new()
+                }
+                _ => String::new(),
             };
             temp_buf.extend(data.chars());
         }
-        let _ = temp_buf.trim_end();
+        //trim the trailing space
+        temp_buf = temp_buf.trim_end().to_string();
         temp_buf.extend(")\r\n".chars());
 
         _final_vec.push(temp_buf);
