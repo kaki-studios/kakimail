@@ -47,7 +47,7 @@ for req in ["SINCE", "ON", "BEFORE"]:
 (typ, [data]) = client.search(None, "RETURN (MIN COUNT ALL) SUBJECT test")
 print(typ)
 print(data)
-client.fetch("1:*", "BODY[]")
+client.fetch("1:10", "FULL")
 client.expunge()
 client.close()
 client.logout()

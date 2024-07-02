@@ -1,6 +1,7 @@
 use anyhow::anyhow;
 
 use crate::{
+    database,
     imap::{IMAPOp, IMAPState},
     parsing::{self, imap::FetchArgs},
 };
@@ -69,16 +70,22 @@ pub(crate) async fn fetch_or_uid(
                 //match the item, then extract info from parse_mail accordingly, format as
                 //String, add to a vec
                 FetchArgs::InternalDate => {
-                    format!("INTERNALDATE \"{}\"", date.format("%d-%b-%Y %H:%M:%S %z"))
+                    format!("INTERNALDATE \"{}\" ", date.format("%d-%b-%Y %H:%M:%S %z"))
                 }
-                FetchArgs::Uid => format!("UID {uid}"),
+                FetchArgs::Uid => format!("UID {uid} "),
+                FetchArgs::Flags => {
+                    format!("FLAGS ({}) ", database::db_flag_to_readable_flag(&flag))
+                }
                 _ => String::default(),
             };
             temp_buf.extend(data.chars());
         }
+        let _ = temp_buf.trim_end();
         temp_buf.extend(")\r\n".chars());
+
         _final_vec.push(temp_buf);
     }
+    tracing::debug!("{:?}", _final_vec);
 
     Err(anyhow!("not implemented"))
 }

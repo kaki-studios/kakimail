@@ -198,18 +198,27 @@ pub fn fetch(
     .map_err(|e| e.map(|e2| nom::error::Error::new(e2.input.to_string(), e2.code)))?;
     match (SequenceSet::from_str(start), fetch_args(args)) {
         (Ok(x), Ok(y)) => Ok((x, y.1)),
-        (_, _) => Err(nom::Err::Failure(nom::error::Error::new(
-            "bad input".to_owned(),
+        (x, y) => Err(nom::Err::Failure(nom::error::Error::new(
+            format!("errors: \n{:?} and\n{:?}", x, y),
             nom::error::ErrorKind::Fail,
         ))),
     }
 }
-pub fn fetch_args(args: &str) -> IResult<&str, Vec<FetchArgs>> {
-    let args = match args {
-        "ALL" => "(FLAGS INTERNALDATE RFC822.SIZE ENVELOPE)",
-        "FAST" => "(FLAGS INTERNALDATE RFC822.SIZE)",
-        "FULL" => "(FLAGS INTERNALDATE RFC822.SIZE ENVELOPE BODY)",
-        other => other,
+pub fn fetch_args(mut args: &str) -> IResult<&str, Vec<FetchArgs>> {
+    let lowercase = args.to_lowercase();
+
+    //TODO: \r\n is bad here
+    match lowercase.as_ref() {
+        "all\r\n" => {
+            args = "(FLAGS INTERNALDATE RFC822.SIZE ENVELOPE)\r\n";
+        }
+        "fast\r\n" => {
+            args = "(FLAGS INTERNALDATE RFC822.SIZE)\r\n";
+        }
+        "full\r\n" => {
+            args = "(FLAGS INTERNALDATE RFC822.SIZE ENVELOPE BODY)\r\n";
+        }
+        _ => {}
     };
     let mut parser = delimited(
         opt(tag::<&str, &str, nom::error::Error<&str>>("(")),
@@ -240,12 +249,11 @@ pub enum FetchArgs {
 impl FetchArgs {
     pub fn from_str(s: &str) -> IResult<&str, Self> {
         let mut word_parser = alt((
-            take_while(|c: char| c.is_alphabetic() || c == '.'),
+            take_while(|c: char| c.is_alphanumeric() || c == '.'),
             rest::<&str, nom::error::Error<&str>>,
         ));
 
         let (arg_rest, word) = word_parser(s)?;
-        // dbg!(&word, &arg_rest);
 
         //common parsers
         let section_part_parser = separated_list0(
@@ -296,10 +304,11 @@ impl FetchArgs {
             "uid" => (arg_rest, FetchArgs::Uid),
 
             _ => {
+                tracing::error!("{word} doesn't match any fetch arg");
                 return Err(nom::Err::Failure(nom::error::Error::new(
                     s,
                     nom::error::ErrorKind::Fail,
-                )))
+                )));
             }
         };
         // dbg!(&result);
@@ -526,9 +535,11 @@ Subject: test";
     }
     #[test]
     fn test_fetch() {
-        let res = fetch("1:10,15:* (BODY[HEADER] BODY[TEXT])").unwrap();
+        let res = fetch("1:10,15:* (BODY[HEADER] BODY[TEXT])\r\n").unwrap();
         println!("{:?}", res);
-        let res = fetch("0:5,8:10 (BODY[2.HEADER] BODYSTRUCTURE)").unwrap();
+        let res = fetch("0:5,8:10 (BODY[2.HEADER] BODYSTRUCTURE)\r\n").unwrap();
+        println!("{:?}", res);
+        let res = fetch("1:10 FULL\r\n").unwrap();
         println!("{:?}", res);
     }
 }

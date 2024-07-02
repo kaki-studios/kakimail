@@ -507,7 +507,7 @@ impl FromStr for SequenceSet {
     fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
         Ok(SequenceSet {
             sequences: s
-                .split(",")
+                .split(',')
                 .map(Sequence::from_str)
                 .collect::<Result<Vec<Sequence>>>()?,
         })

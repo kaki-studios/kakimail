@@ -544,6 +544,24 @@ impl FromStr for IMAPFlags {
     }
 }
 
+pub fn db_flag_to_readable_flag(input: &str) -> String {
+    let mut vec = Vec::new();
+    for (idx, val) in input.chars().enumerate() {
+        if val == '1' {
+            match idx {
+                0 => vec.push("\\Draft"),
+                1 => vec.push("\\Seen"),
+                2 => vec.push("\\Deleted"),
+                3 => vec.push("\\Flagged"),
+                4 => vec.push("\\Answered"),
+                _ => {}
+            }
+        }
+    }
+    vec.join(" ")
+}
+
+//scary
 pub fn value_to_param<'a>(value: &'a Value) -> Option<&'a dyn ToSql> {
     match value {
         Value::Null => None,
