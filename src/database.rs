@@ -164,6 +164,7 @@ impl DBClient {
         };
         let next_uid = self.next_uid().await;
         let next_seqnum = self.next_seqnum(mailbox_id).await;
+        tracing::info!("replicating mail: {:?}", mail.clone());
 
         self.db.execute(
             "INSERT INTO mail VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",

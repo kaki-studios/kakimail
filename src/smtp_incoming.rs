@@ -92,19 +92,25 @@ impl SmtpIncoming {
             let i = &i[1..i.len() - 1];
             let mut parts = i.split("@").into_iter();
             let Some(user) = parts.next() else {
+                tracing::warn!("no user: {i}");
                 continue;
             };
             let Some(domain) = parts.next() else {
+                tracing::warn!("no domain: {i}");
                 continue;
             };
             dbg!(user, domain);
             if domain != self.domain {
+                tracing::warn!("invalid domain: {i}");
                 continue;
             }
             let Some(user_id) = db.get_user_id(user).await else {
+                //TODO: make this check earlier, while doing smtp so client can know
+                tracing::warn!("invalid user: {i}");
                 continue;
             };
             let Some(m_id) = db.get_mailbox_id(user_id, "INBOX").await.ok() else {
+                tracing::warn!("invalid inbox for user: {i}");
                 continue;
             };
             db.replicate(mail.clone(), m_id, None)
