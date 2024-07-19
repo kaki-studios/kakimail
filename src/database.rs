@@ -176,7 +176,7 @@ impl DBClient {
                 mail.to.join(", "),
                 mail.data,
                 mailbox_id,
-                0,
+                "00000",
             ),
         )?;
         Ok(())
@@ -475,15 +475,18 @@ impl DBClient {
         &self,
         sequence_set: SequenceSet,
         uid: bool,
+        mailbox_id: i32,
         //         seqnum, uid,  date,                    data,   flags
     ) -> Result<Vec<(i32, (i32, (DateTime<FixedOffset>, (String, String))))>> {
         let (sql_str, values) = utils::sequence_set_to_sql(sequence_set, "seqnum");
-        let values = values
+        let mut values = values
             .iter()
             .flat_map(|i| value_to_param(i))
             .collect::<Vec<_>>();
+        values.push(&mailbox_id);
+
         let sql_statement = format!(
-            "SELECT seqnum, uid, date, data, flags FROM mail WHERE {}",
+            "SELECT seqnum, uid, date, data, flags FROM mail WHERE {} AND mailbox_id = ?",
             sql_str
         );
         let mut stmt = self.db.prepare(&sql_statement)?;

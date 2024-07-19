@@ -283,7 +283,9 @@ impl FetchArgs {
                 let (rest, list) = section_binary_parser(arg_rest)?;
                 (rest, FetchArgs::BinarySize(list))
             }
-            "body" if arg_rest.starts_with(" ") => (arg_rest, FetchArgs::BodyNoArgs),
+            "body" if arg_rest.starts_with(" ") || arg_rest.starts_with(")") => {
+                (arg_rest, FetchArgs::BodyNoArgs)
+            }
             x if x == "body" || x == "body.peek" => {
                 let mut parser = tuple((
                     delimited(char('['), SectionSpec::from_str, char(']')),

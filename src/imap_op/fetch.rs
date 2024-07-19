@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use mailparse::MailHeaderMap;
+use mailparse::{MailAddr, MailHeader, MailHeaderMap, SingleInfo};
 
 use crate::{
     database,
@@ -35,7 +35,7 @@ pub(crate) async fn fetch_or_uid(
     crate::imap::IMAPState,
     crate::imap::ResponseInfo,
 )> {
-    let IMAPState::Selected(_user) = state else {
+    let IMAPState::Selected(user) = state else {
         return Err(anyhow!("wrong state"));
     };
     let (sequence_set, fetch_args) = parsing::imap::fetch(args)?;
@@ -46,7 +46,7 @@ pub(crate) async fn fetch_or_uid(
     ) = db
         .lock()
         .await
-        .fetch(sequence_set, uid)?
+        .fetch(sequence_set, uid, user.mailbox_id)?
         .iter()
         .cloned()
         .unzip();
@@ -85,7 +85,7 @@ pub(crate) async fn fetch_or_uid(
                 }
                 FetchArgs::RFC822Size => format!("RFC822.SIZE {} ", mail.raw_bytes.len()),
                 FetchArgs::Envelope => {
-                    let headers = mail.get_headers();
+                    let headers = &mail.headers;
                     let date = headers
                         .get_first_value("Date")
                         .map(|i| format!("\"{i}\""))
@@ -96,29 +96,41 @@ pub(crate) async fn fetch_or_uid(
                         .unwrap_or("NIL".to_owned());
 
                     //make them into  parenthesized lists of address structures.
-                    let mut from = headers.get_first_value("From").unwrap_or("NIL".to_owned());
-                    tracing::debug!("From: {from}");
-                    from = parenthesized_list_of_addr_structures(&from);
+                    let from = headers
+                        .get_first_header("From")
+                        .map(parenthesized_list_of_addr_structures)
+                        .unwrap_or("NIL".to_owned());
+                    // tracing::debug!("From: {from}");
 
-                    let mut sender = headers.get_first_value("Sender").unwrap_or(from.clone());
-                    tracing::debug!("Sender: {sender}");
-                    sender = parenthesized_list_of_addr_structures(&sender);
+                    let sender = headers
+                        .get_first_header("Sender")
+                        .map(parenthesized_list_of_addr_structures)
+                        .unwrap_or("NIL".to_owned());
+                    // tracing::debug!("Sender: {sender}");
 
-                    let mut reply_to = headers.get_first_value("Reply-To").unwrap_or(from.clone());
-                    tracing::debug!("Reply-To: {reply_to}");
-                    reply_to = parenthesized_list_of_addr_structures(&reply_to);
+                    let reply_to = headers
+                        .get_first_header("Reply-To")
+                        .map(parenthesized_list_of_addr_structures)
+                        .unwrap_or("NIL".to_owned());
+                    // tracing::debug!("Reply-To: {sender}");
 
-                    let mut to = headers.get_first_value("To").unwrap_or("NIL".to_owned());
-                    tracing::debug!("To: {to}");
-                    to = parenthesized_list_of_addr_structures(&to);
+                    let to = headers
+                        .get_first_header("To")
+                        .map(parenthesized_list_of_addr_structures)
+                        .unwrap_or("NIL".to_owned());
+                    // tracing::debug!("To: {to}");
 
-                    let mut cc = headers.get_first_value("Cc").unwrap_or("NIL".to_owned());
-                    tracing::debug!("Cc: {cc}");
-                    cc = parenthesized_list_of_addr_structures(&cc);
+                    let cc = headers
+                        .get_first_header("Cc")
+                        .map(parenthesized_list_of_addr_structures)
+                        .unwrap_or("NIL".to_owned());
+                    // tracing::debug!("Cc: {cc}");
 
-                    let mut bcc = headers.get_first_value("Bcc").unwrap_or("NIL".to_owned());
-                    tracing::debug!("Bcc: {bcc}");
-                    bcc = parenthesized_list_of_addr_structures(&bcc);
+                    let bcc = headers
+                        .get_first_header("Bcc")
+                        .map(parenthesized_list_of_addr_structures)
+                        .unwrap_or("NIL".to_owned());
+                    // tracing::debug!("Bcc: {bcc}");
 
                     let in_reply_to = headers
                         .get_first_value("In-Reply-To")
@@ -128,23 +140,25 @@ pub(crate) async fn fetch_or_uid(
                         .get_first_value("Message-ID")
                         .map(|i| format!("\"{i}\""))
                         .unwrap_or("NIL".to_owned());
-                    tracing::debug!("----------------");
-                    tracing::debug!("Date: {date}");
-                    tracing::debug!("Subject: {subject}");
-                    tracing::debug!("From: {from}");
-                    tracing::debug!("Sender: {sender}");
-                    tracing::debug!("Reply-To: {reply_to}");
-                    tracing::debug!("To: {to}");
-                    tracing::debug!("Cc: {cc}");
-                    tracing::debug!("Bcc: {bcc}");
-                    tracing::debug!("In-Reply-To: {in_reply_to}");
-                    tracing::debug!("Message-ID: {message_id}");
-                    tracing::debug!("----------------");
+                    // tracing::debug!("----------------");
+                    // tracing::debug!("Date: {date}");
+                    // tracing::debug!("Subject: {subject}");
+                    // tracing::debug!("From: {from}");
+                    // tracing::debug!("Sender: {sender}");
+                    // tracing::debug!("Reply-To: {reply_to}");
+                    // tracing::debug!("To: {to}");
+                    // tracing::debug!("Cc: {cc}");
+                    // tracing::debug!("Bcc: {bcc}");
+                    // tracing::debug!("In-Reply-To: {in_reply_to}");
+                    // tracing::debug!("Message-ID: {message_id}");
+                    // tracing::debug!("----------------");
 
                     format!("ENVELOPE ({date} {subject} {from} {sender} {reply_to} {to} {cc} {bcc} {in_reply_to} {message_id})")
                 }
                 FetchArgs::BodyNoArgs => {
                     //TODO
+
+                    // tracing::debug!("mail with uid {uid} has {:?} parts", mail.parts().count());
 
                     String::new()
                 }
@@ -158,49 +172,49 @@ pub(crate) async fn fetch_or_uid(
 
         _final_vec.push(temp_buf);
     }
-    for i in _final_vec {
-        tracing::debug!("{i}");
-    }
+    // for i in _final_vec {
+    //     tracing::debug!("{i}");
+    // }
 
     Err(anyhow!("not implemented"))
 }
 
-fn parenthesized_list_of_addr_structures(input: &str) -> String {
-    let list = input.split(',');
+fn parenthesized_list_of_addr_structures(input: &mailparse::MailHeader) -> String {
+    //TODO:
+    //MailAddr::Single is pretty easy, but because MailAddr::Group is harder, i've made another
+    //function get_data_single_item, so that inside the MailAddr::Group block i can call it in a
+    //for loop. formatting the whole thing is still a pain in the ass because documentation is
+    //obscure and available material is scarce. claude must help me. i just want to format the data
+    //items correctly, how hard can it be?
     let mut final_buf = String::from("(");
-    for i in list {
-        if final_buf.as_str() != "(" {
-            //if it's not the first iteration
-            final_buf.push(' ')
-        }
-        if i.contains("<") {
-            // it is of form "Display Name <username@domain.com>"
-            let (display_name, rest) = i
-                .split_once(" <")
-                .map(|(i, rest)| (format!("\"{i}\""), rest))
-                .unwrap_or(("NIL".to_owned(), i));
+    let _ = mailparse::addrparse_header(input).map(|i| {
+        i.iter().for_each(|e| {
+            let mut _display_name = String::from("NIL");
+            let mut _groupname = String::from("NIL");
+            let mut _username = String::from("NIL");
+            let mut _domain = String::from("NIL");
 
-            let (username, rest) = rest
-                .split_once("@")
-                .map(|(i, rest)| (format!("\"{i}\""), rest))
-                .unwrap_or(("NIL".to_owned(), rest));
-
-            let domain = rest
-                .strip_suffix(">")
-                .map(|i| format!("\"{i}\""))
-                .unwrap_or("NIL".to_owned());
-            final_buf
-                .push_str(format!("(\"{display_name}\" NIL \"{username}\" \"{domain}\")").as_str());
-        } else {
-            // it is of form "username@domain.com"
-            let (username, domain) = i
-                .split_once("@")
-                .map(|(i, y)| (format!("\"{i}\""), format!("\"{y}\"")))
-                .unwrap_or(("NIL".to_owned(), "NIL".to_owned()));
-
-            final_buf.push_str(format!("(NIL NIL \"{username}\" \"{domain}\")").as_str())
-        }
-    }
-    final_buf.extend(")".chars());
+            match e {
+                MailAddr::Group(group) => {
+                    // group.group_name
+                    _groupname = format!("\"{}\"", group.group_name);
+                }
+                MailAddr::Single(single) => {
+                    //TODO: format
+                    dbg!(single);
+                }
+            }
+            final_buf.push_str(format!("({_display_name} NIL {_username} {_domain})").as_str());
+        });
+    });
+    // final_buf.push_str(format!("(\"{display_name}\" NIL \"{username}\" \"{domain}\")").as_str());
+    final_buf.push(')');
     final_buf
+}
+
+fn get_data_single_item(input: &SingleInfo) -> String {
+    let mut res = String::from("(");
+    //TODO
+    res.push(')');
+    res
 }

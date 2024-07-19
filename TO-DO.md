@@ -20,7 +20,6 @@
 - [ ] parsing with nom (for difficult commands)
     - [X] search
     - [X] fetch
-- [ ] display names
 - [ ] caching
 
 other stuff?? add here!
