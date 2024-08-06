@@ -1,5 +1,5 @@
 use anyhow::anyhow;
-use mailparse::{MailAddr, MailHeader, MailHeaderMap, SingleInfo};
+use mailparse::{MailAddr, MailHeader, MailHeaderMap, ParsedMail, SingleInfo};
 
 use crate::{
     database,
@@ -84,81 +84,9 @@ pub(crate) async fn fetch_or_uid(
                     format!("FLAGS ({}) ", database::db_flag_to_readable_flag(&flag))
                 }
                 FetchArgs::RFC822Size => format!("RFC822.SIZE {} ", mail.raw_bytes.len()),
-                FetchArgs::Envelope => {
-                    let headers = &mail.headers;
-                    let date = headers
-                        .get_first_value("Date")
-                        .map(|i| format!("\"{i}\""))
-                        .unwrap_or("NIL".to_owned());
-                    let subject = headers
-                        .get_first_value("Subject")
-                        .map(|i| format!("\"{i}\""))
-                        .unwrap_or("NIL".to_owned());
-
-                    //make them into  parenthesized lists of address structures.
-                    let from = headers
-                        .get_first_header("From")
-                        .map(parenthesized_list_of_addr_structures)
-                        .unwrap_or("NIL".to_owned());
-                    // tracing::debug!("From: {from}");
-
-                    let sender = headers
-                        .get_first_header("Sender")
-                        .map(parenthesized_list_of_addr_structures)
-                        .unwrap_or("NIL".to_owned());
-                    // tracing::debug!("Sender: {sender}");
-
-                    let reply_to = headers
-                        .get_first_header("Reply-To")
-                        .map(parenthesized_list_of_addr_structures)
-                        .unwrap_or("NIL".to_owned());
-                    // tracing::debug!("Reply-To: {sender}");
-
-                    let to = headers
-                        .get_first_header("To")
-                        .map(parenthesized_list_of_addr_structures)
-                        .unwrap_or("NIL".to_owned());
-                    // tracing::debug!("To: {to}");
-
-                    let cc = headers
-                        .get_first_header("Cc")
-                        .map(parenthesized_list_of_addr_structures)
-                        .unwrap_or("NIL".to_owned());
-                    // tracing::debug!("Cc: {cc}");
-
-                    let bcc = headers
-                        .get_first_header("Bcc")
-                        .map(parenthesized_list_of_addr_structures)
-                        .unwrap_or("NIL".to_owned());
-                    // tracing::debug!("Bcc: {bcc}");
-
-                    let in_reply_to = headers
-                        .get_first_value("In-Reply-To")
-                        .map(|i| format!("\"{i}\""))
-                        .unwrap_or("NIL".to_owned());
-                    let message_id = headers
-                        .get_first_value("Message-ID")
-                        .map(|i| format!("\"{i}\""))
-                        .unwrap_or("NIL".to_owned());
-                    // tracing::debug!("----------------");
-                    // tracing::debug!("Date: {date}");
-                    // tracing::debug!("Subject: {subject}");
-                    // tracing::debug!("From: {from}");
-                    // tracing::debug!("Sender: {sender}");
-                    // tracing::debug!("Reply-To: {reply_to}");
-                    // tracing::debug!("To: {to}");
-                    // tracing::debug!("Cc: {cc}");
-                    // tracing::debug!("Bcc: {bcc}");
-                    // tracing::debug!("In-Reply-To: {in_reply_to}");
-                    // tracing::debug!("Message-ID: {message_id}");
-                    // tracing::debug!("----------------");
-
-                    format!("ENVELOPE ({date} {subject} {from} {sender} {reply_to} {to} {cc} {bcc} {in_reply_to} {message_id})")
-                }
+                FetchArgs::Envelope => envelope_to_string(&mail),
                 FetchArgs::BodyNoArgs => {
-                    //TODO
-
-                    // tracing::debug!("mail with uid {uid} has {:?} parts", mail.parts().count());
+                    tracing::debug!("mail with uid {uid} has {:?} parts", mail.parts().count());
 
                     String::new()
                 }
@@ -225,4 +153,76 @@ fn get_data_single_item(i: &SingleInfo) -> String {
     res.push_str(&list);
     res.push(')');
     res
+}
+
+pub fn envelope_to_string(mail: &ParsedMail) -> String {
+    let headers = &mail.headers;
+    let date = headers
+        .get_first_value("Date")
+        .map(|i| format!("\"{i}\""))
+        .unwrap_or("NIL".to_owned());
+    let subject = headers
+        .get_first_value("Subject")
+        .map(|i| format!("\"{i}\""))
+        .unwrap_or("NIL".to_owned());
+
+    //make them into  parenthesized lists of address structures.
+    let from = headers
+        .get_first_header("From")
+        .map(parenthesized_list_of_addr_structures)
+        .unwrap_or("NIL".to_owned());
+    // tracing::debug!("From: {from}");
+
+    let sender = headers
+        .get_first_header("Sender")
+        .map(parenthesized_list_of_addr_structures)
+        .unwrap_or("NIL".to_owned());
+    // tracing::debug!("Sender: {sender}");
+
+    let reply_to = headers
+        .get_first_header("Reply-To")
+        .map(parenthesized_list_of_addr_structures)
+        .unwrap_or("NIL".to_owned());
+    // tracing::debug!("Reply-To: {sender}");
+
+    let to = headers
+        .get_first_header("To")
+        .map(parenthesized_list_of_addr_structures)
+        .unwrap_or("NIL".to_owned());
+    // tracing::debug!("To: {to}");
+
+    let cc = headers
+        .get_first_header("Cc")
+        .map(parenthesized_list_of_addr_structures)
+        .unwrap_or("NIL".to_owned());
+    // tracing::debug!("Cc: {cc}");
+
+    let bcc = headers
+        .get_first_header("Bcc")
+        .map(parenthesized_list_of_addr_structures)
+        .unwrap_or("NIL".to_owned());
+    // tracing::debug!("Bcc: {bcc}");
+
+    let in_reply_to = headers
+        .get_first_value("In-Reply-To")
+        .map(|i| format!("\"{i}\""))
+        .unwrap_or("NIL".to_owned());
+    let message_id = headers
+        .get_first_value("Message-ID")
+        .map(|i| format!("\"{i}\""))
+        .unwrap_or("NIL".to_owned());
+    // tracing::debug!("----------------");
+    // tracing::debug!("Date: {date}");
+    // tracing::debug!("Subject: {subject}");
+    // tracing::debug!("From: {from}");
+    // tracing::debug!("Sender: {sender}");
+    // tracing::debug!("Reply-To: {reply_to}");
+    // tracing::debug!("To: {to}");
+    // tracing::debug!("Cc: {cc}");
+    // tracing::debug!("Bcc: {bcc}");
+    // tracing::debug!("In-Reply-To: {in_reply_to}");
+    // tracing::debug!("Message-ID: {message_id}");
+    // tracing::debug!("----------------");
+
+    format!("ENVELOPE ({date} {subject} {from} {sender} {reply_to} {to} {cc} {bcc} {in_reply_to} {message_id})")
 }

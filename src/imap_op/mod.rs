@@ -1,5 +1,6 @@
 pub mod append;
 pub mod authenticate;
+pub mod bodystructure;
 pub mod capability;
 pub mod close;
 pub mod create;
