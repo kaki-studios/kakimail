@@ -3,7 +3,7 @@ use mailparse::{MailAddr, MailHeader, MailHeaderMap, SingleInfo};
 
 use crate::{
     database,
-    imap::{IMAPOp, IMAPState},
+    imap::{IMAPOp, IMAPState, ResponseInfo},
     parsing::{self, imap::FetchArgs},
 };
 
@@ -172,49 +172,57 @@ pub(crate) async fn fetch_or_uid(
 
         _final_vec.push(temp_buf);
     }
-    // for i in _final_vec {
+    _final_vec.push(format!("{tag} OK FETCH completed\r\n"));
+    // for i in &_final_vec {
     //     tracing::debug!("{i}");
     // }
 
-    Err(anyhow!("not implemented"))
+    Ok((
+        _final_vec
+            .iter()
+            .map(|i| i.as_bytes().to_vec())
+            .collect::<Vec<_>>(),
+        state,
+        ResponseInfo::Regular,
+    ))
 }
 
 fn parenthesized_list_of_addr_structures(input: &mailparse::MailHeader) -> String {
-    //TODO:
-    //MailAddr::Single is pretty easy, but because MailAddr::Group is harder, i've made another
-    //function get_data_single_item, so that inside the MailAddr::Group block i can call it in a
-    //for loop. formatting the whole thing is still a pain in the ass because documentation is
-    //obscure and available material is scarce. claude must help me. i just want to format the data
-    //items correctly, how hard can it be?
     let mut final_buf = String::from("(");
     let _ = mailparse::addrparse_header(input).map(|i| {
-        i.iter().for_each(|e| {
-            let mut _display_name = String::from("NIL");
-            let mut _groupname = String::from("NIL");
-            let mut _username = String::from("NIL");
-            let mut _domain = String::from("NIL");
-
-            match e {
-                MailAddr::Group(group) => {
-                    // group.group_name
-                    _groupname = format!("\"{}\"", group.group_name);
+        i.iter().for_each(|e| match e {
+            MailAddr::Group(group) => {
+                final_buf.push_str(&format!("(NIL NIL {} NIL)", group.group_name));
+                for i in &group.addrs {
+                    final_buf.push_str(get_data_single_item(i).as_str());
                 }
-                MailAddr::Single(single) => {
-                    //TODO: format
-                    dbg!(single);
-                }
+                final_buf.push_str("(NIL NIL NIL NIL)");
             }
-            final_buf.push_str(format!("({_display_name} NIL {_username} {_domain})").as_str());
+            MailAddr::Single(single) => {
+                final_buf.push_str(get_data_single_item(single).as_str());
+            }
         });
     });
-    // final_buf.push_str(format!("(\"{display_name}\" NIL \"{username}\" \"{domain}\")").as_str());
     final_buf.push(')');
     final_buf
 }
 
-fn get_data_single_item(input: &SingleInfo) -> String {
+///gets the data for a SingleInfo
+fn get_data_single_item(i: &SingleInfo) -> String {
     let mut res = String::from("(");
-    //TODO
+    let (mbox_name, domain) = i.addr.split_once("@").unwrap_or(("NIL", "NIL"));
+    let list = [
+        i.display_name
+            .clone()
+            .map(|i| format!("\"{i}\""))
+            .unwrap_or("NIL".to_owned())
+            .as_str(),
+        "NIL",
+        &format!("\"{}\"", mbox_name),
+        &format!("\"{}\"", domain),
+    ]
+    .join(" ");
+    res.push_str(&list);
     res.push(')');
     res
 }
