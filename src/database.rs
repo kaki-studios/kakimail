@@ -280,11 +280,15 @@ impl DBClient {
         return Some(*values);
     }
     pub async fn create_mailbox(&self, user_id: i32, mailbox_name: &str) -> Result<()> {
-        self.db
-            .prepare("INSERT INTO mailboxes(name, user_id, flags) VALUES(?, ?, 0) ")?
+        let rownum = self
+            .db
+            .prepare("INSERT IF NOT EXISTS INTO mailboxes(name, user_id, flags) VALUES(?, ?, 0) ")?
             .execute(params![mailbox_name, user_id])?;
-
-        Ok(())
+        if rownum == 0 {
+            Err(anyhow!("Mailbox already exists"))
+        } else {
+            Ok(())
+        }
     }
     pub async fn delete_mailbox(&self, mailbox_id: i32) -> Result<()> {
         self.db

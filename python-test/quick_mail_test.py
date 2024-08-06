@@ -5,7 +5,7 @@ import sys
 
 
 from_addr = "testfrom@example.com"
-to_addrs = ["test1@kaki.foo", "test2@kaki.foo"]
+to_addrs = ["test1@kaki.foo", "kakinew@kaki.foo"]
 
 
 # Add the From: and To: headers at the start!
