@@ -37,13 +37,17 @@ pub(super) async fn select_or_examine(
     crate::imap::IMAPState,
     crate::imap::ResponseInfo,
 )> {
-    let IMAPState::Authed(id) = state else {
-        //outlook client somehow submits 2 select commands?? this is the proper response for them
-        return Ok((
-            vec!["* BAD Wrong state\r\n".as_bytes().to_vec()],
-            state,
-            ResponseInfo::Regular,
-        ));
+    let id = match state {
+        //outlook client somehow submits 2 select commands??
+        IMAPState::Authed(id) => id,
+        IMAPState::Selected(x) => x.user_id,
+        _ => {
+            return Ok((
+                vec!["* BAD Wrong state\r\n".as_bytes().to_vec()],
+                state,
+                ResponseInfo::Regular,
+            ));
+        }
     };
     let mut msg = args.split_whitespace();
     let mailbox = match msg.next().context("should provide mailbox name") {
