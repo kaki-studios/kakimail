@@ -1,5 +1,6 @@
-//NOTE: this is clade-generated code
-//haven't checked that much, documentation (rfc9051) is very confusing
+//NOTE: this is incomplete and only supports a fraction of the required mime types
+//TODO: support all mime types and pass the tests
+//rn i'm just trying to get the whole thing working
 
 use mailparse::{parse_mail, MailHeaderMap, ParsedMail};
 
@@ -61,7 +62,7 @@ pub fn parse_bodystructure(raw_email: &[u8]) -> Result<BodyStructure, Box<dyn Er
     Ok(build_bodystructure(&parsed_mail))
 }
 
-fn build_bodystructure(part: &ParsedMail) -> BodyStructure {
+pub fn build_bodystructure(part: &ParsedMail) -> BodyStructure {
     match part.ctype.mimetype.split('/').collect::<Vec<_>>()[..] {
         ["text", subtype] => BodyStructure::Text(TextPart {
             subtype: subtype.to_string(),
@@ -295,10 +296,6 @@ fn language_to_string(language: &Option<Vec<String>>) -> String {
     })
 }
 
-pub fn body_to_string(structure: &BodyStructure) -> String {
-    bodystructure_to_string(structure, false)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,7 +314,7 @@ This is a test email."#;
 
         let structure = parse_bodystructure(raw_email.as_bytes()).unwrap();
 
-        let body_result = body_to_string(&structure);
+        let body_result = bodystructure_to_string(&structure, false);
         assert_eq!(
             body_result,
             r#"("TEXT" "plain" ("charset" "utf-8") NIL NIL "utf-8" 21 1)"#
@@ -353,7 +350,7 @@ JVBERi0xLjMKJcTl8uXrp/Og0MTGCjQgMCBvYmoKPDwgL0xlbmd0aCA1IDAgUiAvRmlsdGVyIC9GbGF0
 
         let structure = parse_bodystructure(raw_email.as_bytes()).unwrap();
 
-        let body_result = body_to_string(&structure);
+        let body_result = bodystructure_to_string(&structure, false);
         assert_eq!(
             body_result,
             r#"(("TEXT" "plain" ("charset" "utf-8") NIL NIL "utf-8" 37 1) ("APPLICATION" "pdf" ("name" "document.pdf") NIL NIL "base64" 96 NIL) "MIXED")"#
@@ -403,7 +400,7 @@ Content-Disposition: attachment; filename="data.bin"
 
         let structure = parse_bodystructure(raw_email.as_bytes()).unwrap();
 
-        let body_result = body_to_string(&structure);
+        let body_result = bodystructure_to_string(&structure, false);
         assert_eq!(
             body_result,
             r#"(("TEXT" "plain" ("charset" "utf-8") NIL NIL "utf-8" 39 1) (("TEXT" "plain" ("charset" "utf-8") NIL NIL "utf-8" 31 1) ("TEXT" "html" ("charset" "utf-8") NIL NIL "utf-8" 61 1) "ALTERNATIVE") ("APPLICATION" "octet-stream" NIL NIL NIL "7BIT" 27 NIL) "MIXED")"#
@@ -432,16 +429,22 @@ This is the content of the original message."#;
 
         let structure = parse_bodystructure(raw_email.as_bytes()).unwrap();
 
-        let body_result = body_to_string(&structure);
+        let body_result = bodystructure_to_string(&structure, false);
         assert_eq!(
             body_result,
-            r#"("MESSAGE" "RFC822" NIL NIL NIL "7BIT" 185 ("TODO: Implement envelope parsing" ("TEXT" "plain" NIL NIL NIL "7BIT" 46 1) 46) 5)"#
+            format!(
+                r#"("MESSAGE" "RFC822" NIL NIL NIL "7BIT" 185 ({} ("TEXT" "plain" NIL NIL NIL "7BIT" 46 1) 46) 5)"#,
+                fetch::envelope_to_string(&parse_mail(raw_email.as_bytes()).unwrap())
+            )
         );
 
         let bodystructure_result = bodystructure_to_string(&structure, true);
         assert_eq!(
             bodystructure_result,
-            r#"("MESSAGE" "RFC822" NIL NIL NIL "7BIT" 185 ("TODO: Implement envelope parsing" ("TEXT" "plain" NIL NIL NIL "7BIT" 46 1 NIL NIL NIL NIL) 46) 5 NIL NIL NIL NIL)"#
+            format!(
+                r#"("MESSAGE" "RFC822" NIL NIL NIL "7BIT" 185 ({} ("TEXT" "plain" NIL NIL NIL "7BIT" 46 1 NIL NIL NIL NIL) 46) 5 NIL NIL NIL NIL)"#,
+                fetch::envelope_to_string(&parse_mail(raw_email.as_bytes()).unwrap())
+            )
         );
     }
 
@@ -457,7 +460,7 @@ Content-Type: multipart/mixed; boundary="boundary"
 
         let structure = parse_bodystructure(raw_email.as_bytes()).unwrap();
 
-        let body_result = body_to_string(&structure);
+        let body_result = bodystructure_to_string(&structure, false);
         assert_eq!(body_result, r#"("TEXT" "plain" NIL NIL NIL "7BIT" 0 0)"#);
 
         let bodystructure_result = bodystructure_to_string(&structure, true);

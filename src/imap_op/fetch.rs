@@ -86,8 +86,28 @@ pub(crate) async fn fetch_or_uid(
                 FetchArgs::RFC822Size => format!("RFC822.SIZE {} ", mail.raw_bytes.len()),
                 FetchArgs::Envelope => envelope_to_string(&mail),
                 FetchArgs::BodyNoArgs => {
-                    tracing::debug!("mail with uid {uid} has {:?} parts", mail.parts().count());
-
+                    let bodystruct = super::bodystructure::build_bodystructure(&mail);
+                    super::bodystructure::bodystructure_to_string(&bodystruct, false)
+                }
+                FetchArgs::BodyStructure => {
+                    let bodystruct = super::bodystructure::build_bodystructure(&mail);
+                    super::bodystructure::bodystructure_to_string(&bodystruct, true)
+                }
+                FetchArgs::Body(sectionspec, opt) => {
+                    //TODO
+                    String::new()
+                }
+                FetchArgs::BinarySize(sects) => {
+                    //NOTE: idk if this is correct
+                    let mut temp = None;
+                    for i in sects {
+                        if temp.is_none() {
+                            temp = mail.subparts.get(*i as usize);
+                        } else {
+                            temp = temp.map(|m| m.subparts.get(*i as usize)).flatten();
+                        }
+                    }
+                    temp.map(|i| i.raw_bytes.len()).unwrap_or(0);
                     String::new()
                 }
                 _ => String::new(),
