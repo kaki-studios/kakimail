@@ -75,9 +75,14 @@ pub fn build_bodystructure(part: &ParsedMail) -> BodyStructure {
             id: part.get_headers().get_first_value("Content-ID"),
             description: part.get_headers().get_first_value("Content-Description"),
             encoding: part.ctype.charset.clone(),
-            size: part.get_body().map(|i| i.len()).unwrap_or(0),
+            size: part
+                .get_body()
+                .map(|i| i.len())
+                .map_err(|e| tracing::error!("couldn't get body len: {e}"))
+                .unwrap_or(0),
             lines: part
                 .get_body()
+                .map_err(|e| tracing::error!("couldn't get body lines: {e}"))
                 .unwrap_or("".to_string())
                 .split(|c| c == '\n')
                 .count(),
@@ -110,11 +115,16 @@ pub fn build_bodystructure(part: &ParsedMail) -> BodyStructure {
             id: part.get_headers().get_first_value("Content-ID"),
             description: part.get_headers().get_first_value("Content-Description"),
             encoding: part.ctype.charset.clone(),
-            size: part.get_body().map(|i| i.len()).unwrap_or(0),
+            size: part
+                .get_body()
+                .map(|i| i.len())
+                .map_err(|e| tracing::error!("couldn't get body len: {e}"))
+                .unwrap_or(0),
             envelope: fetch::envelope_to_string(part),
             body: Box::new(build_bodystructure(&part.subparts[0])),
             lines: part
                 .get_body()
+                .map_err(|e| tracing::error!("couldn't get body lines: {e}"))
                 .unwrap_or("".to_string())
                 .split(|c| c == '\n')
                 .count(),
@@ -129,9 +139,14 @@ pub fn build_bodystructure(part: &ParsedMail) -> BodyStructure {
             id: None,
             description: None,
             encoding: "7BIT".to_string(),
-            size: part.get_body().map(|i| i.len()).unwrap_or(0),
+            size: part
+                .get_body()
+                .map(|i| i.len())
+                .map_err(|e| tracing::error!("couldn't get body len: {e}"))
+                .unwrap_or(0),
             lines: part
                 .get_body()
+                .map_err(|e| tracing::error!("couldn't get body lines: {e}"))
                 .unwrap_or("".to_string())
                 .split(|c| c == '\n')
                 .count(),

@@ -285,6 +285,7 @@ impl DBClient {
             .prepare("INSERT IF NOT EXISTS INTO mailboxes(name, user_id, flags) VALUES(?, ?, 0) ")?
             .execute(params![mailbox_name, user_id])?;
         if rownum == 0 {
+            tracing::warn!("couldn't create mailbox: uid: {user_id}, mbox name: {mailbox_name}");
             Err(anyhow!("Mailbox already exists"))
         } else {
             Ok(())
@@ -309,15 +310,15 @@ impl DBClient {
     pub async fn get_mailbox_names_for_user(&self, user_id: i32) -> Option<Vec<String>> {
         let mut result = self
             .db
-            .prepare("SELECT name FROM mailboxes WHERE user_id = ?")
+            .prepare("SELECT name FROM mailboxes WHERE user_id = ? LIMIT 1")
             .ok()?;
         let x = result.query([user_id]).ok()?;
         let vec = x
-            .mapped(|i| i.get::<_, Vec<u8>>(0))
+            .mapped(|i| i.get::<_, String>(0))
             .flatten()
-            .flat_map(|e| std::string::String::from_utf8(e).ok())
             .collect::<Vec<String>>();
         if vec.is_empty() {
+            tracing::warn!("no mailboxes for uid: {user_id}, creating inbox");
             self.create_mailbox(user_id, "INBOX").await.ok()?;
             Some(vec!["INBOX".to_string()])
         } else {

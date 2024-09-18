@@ -87,11 +87,17 @@ pub(crate) async fn fetch_or_uid(
                 FetchArgs::Envelope => envelope_to_string(&mail),
                 FetchArgs::BodyNoArgs => {
                     let bodystruct = super::bodystructure::build_bodystructure(&mail);
-                    super::bodystructure::bodystructure_to_string(&bodystruct, false)
+                    let mut result =
+                        super::bodystructure::bodystructure_to_string(&bodystruct, false);
+                    result.push(' ');
+                    result
                 }
                 FetchArgs::BodyStructure => {
                     let bodystruct = super::bodystructure::build_bodystructure(&mail);
-                    super::bodystructure::bodystructure_to_string(&bodystruct, true)
+                    let mut result =
+                        super::bodystructure::bodystructure_to_string(&bodystruct, true);
+                    result.push(' ');
+                    result
                 }
                 FetchArgs::Body(sectionspec, opt) => {
                     //TODO
@@ -107,7 +113,9 @@ pub(crate) async fn fetch_or_uid(
                             temp = temp.map(|m| m.subparts.get(*i as usize)).flatten();
                         }
                     }
-                    temp.map(|i| i.raw_bytes.len()).unwrap_or(0);
+                    // temp.map(|i| i.raw_bytes.len()).unwrap_or(0);
+                    dbg!(temp.map(|i| i.raw_bytes.len()).unwrap_or(0), temp);
+
                     String::new()
                 }
                 _ => String::new(),
@@ -244,5 +252,6 @@ pub fn envelope_to_string(mail: &ParsedMail) -> String {
     // tracing::debug!("Message-ID: {message_id}");
     // tracing::debug!("----------------");
 
-    format!("ENVELOPE ({date} {subject} {from} {sender} {reply_to} {to} {cc} {bcc} {in_reply_to} {message_id})")
+    //trailing space is necessary
+    format!("ENVELOPE ({date} {subject} {from} {sender} {reply_to} {to} {cc} {bcc} {in_reply_to} {message_id}) ")
 }
