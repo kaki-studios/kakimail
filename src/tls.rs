@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpStream,

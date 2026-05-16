@@ -15,28 +15,37 @@ impl IMAPOp for Rename {
         crate::imap::IMAPState,
         crate::imap::ResponseInfo,
     )> {
-        let mut msg = args.split_whitespace();
-        let IMAPState::Authed(id) = state else {
-            return Err(anyhow!("bad state"));
+        let id = match state {
+            IMAPState::Authed(id) => id,
+            IMAPState::Selected(selected) => selected.user_id,
+            _ => return Err(anyhow!("bad state")),
         };
-        let Some(mailbox_name) = msg.next() else {
-            let resp = format!("{} BAD didn't provide a name\r\n", tag)
+        let parsed = crate::parsing::imap::parse_list(args)
+            .map_err(|e| anyhow!("invalid RENAME args: {:?}", e))?;
+        let Some(mailbox_name) = parsed.first() else {
+            let resp = format!("{} BAD didn't provide a source name\r\n", tag)
+                .as_bytes()
+                .to_vec();
+            return Ok((vec![resp], state, ResponseInfo::Regular));
+        };
+        let Some(new_name) = parsed.get(1) else {
+            let resp = format!("{} BAD didn't provide a destination name\r\n", tag)
                 .as_bytes()
                 .to_vec();
             return Ok((vec![resp], state, ResponseInfo::Regular));
         };
         let db = db.lock().await;
         let Result::Ok(mailbox_id) = db.get_mailbox_id(id, mailbox_name).await else {
-            let resp = format!("{} BAD no such mailbox\r\n", tag)
+            let resp = format!("{} NO RENAME failed: no such mailbox\r\n", tag)
                 .as_bytes()
                 .to_vec();
 
             return Ok((vec![resp], state, ResponseInfo::Regular));
         };
-        db.rename_mailbox(mailbox_name, mailbox_id).await?;
-        if mailbox_name == "INBOX" {
-            //as per the rfc
-            db.create_mailbox(id, "INBOX").await?;
+        db.rename_mailbox(new_name, mailbox_id).await?;
+        if mailbox_name.eq_ignore_ascii_case("INBOX") {
+            //as per the rfc, renaming INBOX creates a new empty INBOX
+            db.create_mailbox(id, "INBOX").await.ok();
         }
         Ok((
             vec![format!("{} OK RENAME completed\r\n", tag)

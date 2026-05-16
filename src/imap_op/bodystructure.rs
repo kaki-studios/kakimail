@@ -1,6 +1,4 @@
-//NOTE: this is incomplete and only supports a fraction of the required mime types
-//TODO: support all mime types and pass the tests
-//rn i'm just trying to get the whole thing working
+// IMAP BODY/BODYSTRUCTURE helpers built from parsed MIME parts.
 
 use mailparse::{parse_mail, MailHeaderMap, ParsedMail};
 
@@ -11,6 +9,7 @@ use super::fetch;
 #[derive(Debug, Clone)]
 pub enum BodyStructure {
     Text(TextPart),
+    Basic(BasicPart),
     Multipart(MultipartPart),
     Message(MessagePart),
 }
@@ -24,6 +23,21 @@ pub struct TextPart {
     encoding: String,
     size: usize,
     lines: usize,
+    md5: Option<String>,
+    disposition: Option<(String, Vec<(String, String)>)>,
+    language: Option<Vec<String>>,
+    location: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BasicPart {
+    kind: String,
+    subtype: String,
+    parameters: Vec<(String, String)>,
+    id: Option<String>,
+    description: Option<String>,
+    encoding: String,
+    size: usize,
     md5: Option<String>,
     disposition: Option<(String, Vec<(String, String)>)>,
     language: Option<Vec<String>>,
@@ -63,99 +77,148 @@ pub fn parse_bodystructure(raw_email: &[u8]) -> Result<BodyStructure, Box<dyn Er
 }
 
 pub fn build_bodystructure(part: &ParsedMail) -> BodyStructure {
-    match part.ctype.mimetype.split('/').collect::<Vec<_>>()[..] {
-        ["text", subtype] => BodyStructure::Text(TextPart {
+    let mut mime_parts = part.ctype.mimetype.split('/');
+    let kind = mime_parts.next().unwrap_or("text").to_ascii_lowercase();
+    let subtype = mime_parts.next().unwrap_or("plain").to_string();
+
+    match (kind.as_str(), subtype.to_ascii_lowercase().as_str()) {
+        ("text", subtype) => BodyStructure::Text(TextPart {
             subtype: subtype.to_string(),
-            parameters: part
-                .ctype
-                .params
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
+            parameters: content_type_params(part),
             id: part.get_headers().get_first_value("Content-ID"),
             description: part.get_headers().get_first_value("Content-Description"),
-            encoding: part.ctype.charset.clone(),
-            size: part
-                .get_body()
-                .map(|i| i.len())
-                .map_err(|e| tracing::error!("couldn't get body len: {e}"))
-                .unwrap_or(0),
-            lines: part
-                .get_body()
-                .map_err(|e| tracing::error!("couldn't get body lines: {e}"))
-                .unwrap_or("".to_string())
-                .split(|c| c == '\n')
-                .count(),
+            encoding: text_encoding(part),
+            size: body_string(part).len(),
+            lines: text_line_count(part),
             md5: part.get_headers().get_first_value("Content-MD5"),
             disposition: parse_content_disposition(part),
             language: parse_content_language(part),
             location: part.get_headers().get_first_value("Content-Location"),
         }),
-        ["multipart", subtype] => BodyStructure::Multipart(MultipartPart {
+        ("multipart", subtype) => {
+            let parts = part
+                .subparts
+                .iter()
+                .filter(|subpart| !is_empty_boundary_part(subpart))
+                .map(build_bodystructure)
+                .collect::<Vec<_>>();
+            if parts.is_empty() {
+                empty_text_part()
+            } else {
+                BodyStructure::Multipart(MultipartPart {
+                    subtype: subtype.to_ascii_uppercase(),
+                    parts,
+                    parameters: vec![],
+                    disposition: parse_content_disposition(part),
+                    language: parse_content_language(part),
+                    location: part.get_headers().get_first_value("Content-Location"),
+                })
+            }
+        }
+        ("message", "rfc822") => {
+            let body = part.get_body_raw().unwrap_or_default();
+            let nested = parse_mail(&body)
+                .map(|mail| build_bodystructure(&mail))
+                .unwrap_or_else(|_| empty_text_part());
+            BodyStructure::Message(MessagePart {
+                subtype: "rfc822".to_string(),
+                parameters: content_type_params(part),
+                id: part.get_headers().get_first_value("Content-ID"),
+                description: part.get_headers().get_first_value("Content-Description"),
+                encoding: transfer_encoding(part),
+                size: body.len(),
+                envelope: fetch::envelope_to_string(part),
+                body: Box::new(nested),
+                lines: body
+                    .split(|b| *b == b'\n')
+                    .filter(|line| !line.iter().all(|b| b.is_ascii_whitespace()))
+                    .count(),
+                md5: part.get_headers().get_first_value("Content-MD5"),
+                disposition: parse_content_disposition(part),
+                language: parse_content_language(part),
+                location: part.get_headers().get_first_value("Content-Location"),
+            })
+        }
+        (kind, subtype) => BodyStructure::Basic(BasicPart {
+            kind: kind.to_ascii_uppercase(),
             subtype: subtype.to_string(),
-            parts: part.subparts.iter().map(build_bodystructure).collect(),
-            parameters: part
-                .ctype
-                .params
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
-            disposition: parse_content_disposition(part),
-            language: parse_content_language(part),
-            location: part.get_headers().get_first_value("Content-Location"),
-        }),
-        ["message", "rfc822"] => BodyStructure::Message(MessagePart {
-            subtype: "rfc822".to_string(),
-            parameters: part
-                .ctype
-                .params
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
+            parameters: content_type_params(part),
             id: part.get_headers().get_first_value("Content-ID"),
             description: part.get_headers().get_first_value("Content-Description"),
-            encoding: part.ctype.charset.clone(),
-            size: part
-                .get_body()
-                .map(|i| i.len())
-                .map_err(|e| tracing::error!("couldn't get body len: {e}"))
-                .unwrap_or(0),
-            envelope: fetch::envelope_to_string(part),
-            body: Box::new(build_bodystructure(&part.subparts[0])),
-            lines: part
-                .get_body()
-                .map_err(|e| tracing::error!("couldn't get body lines: {e}"))
-                .unwrap_or("".to_string())
-                .split(|c| c == '\n')
-                .count(),
+            encoding: transfer_encoding(part),
+            size: part.get_body_raw().map(|body| body.len()).unwrap_or(0),
             md5: part.get_headers().get_first_value("Content-MD5"),
             disposition: parse_content_disposition(part),
             language: parse_content_language(part),
             location: part.get_headers().get_first_value("Content-Location"),
-        }),
-        _ => BodyStructure::Text(TextPart {
-            subtype: "plain".to_string(),
-            parameters: vec![],
-            id: None,
-            description: None,
-            encoding: "7BIT".to_string(),
-            size: part
-                .get_body()
-                .map(|i| i.len())
-                .map_err(|e| tracing::error!("couldn't get body len: {e}"))
-                .unwrap_or(0),
-            lines: part
-                .get_body()
-                .map_err(|e| tracing::error!("couldn't get body lines: {e}"))
-                .unwrap_or("".to_string())
-                .split(|c| c == '\n')
-                .count(),
-            md5: None,
-            disposition: None,
-            language: None,
-            location: None,
         }),
     }
+}
+
+fn content_type_params(part: &ParsedMail) -> Vec<(String, String)> {
+    part.ctype
+        .params
+        .iter()
+        .filter(|(k, _)| !k.eq_ignore_ascii_case("boundary"))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
+}
+
+fn transfer_encoding(part: &ParsedMail) -> String {
+    part.get_headers()
+        .get_first_value("Content-Transfer-Encoding")
+        .unwrap_or_else(|| "7BIT".to_string())
+}
+
+fn text_encoding(part: &ParsedMail) -> String {
+    if part
+        .ctype
+        .params
+        .iter()
+        .any(|(k, _)| k.eq_ignore_ascii_case("charset"))
+    {
+        part.ctype.charset.clone()
+    } else {
+        transfer_encoding(part)
+    }
+}
+
+fn body_string(part: &ParsedMail) -> String {
+    part.get_body()
+        .map_err(|e| tracing::error!("couldn't get body: {e}"))
+        .unwrap_or_default()
+}
+
+fn text_line_count(part: &ParsedMail) -> usize {
+    body_string(part)
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count()
+}
+
+fn is_empty_boundary_part(part: &ParsedMail) -> bool {
+    part.headers.is_empty()
+        && part.subparts.is_empty()
+        && part
+            .get_body_raw()
+            .map(|body| body.is_empty())
+            .unwrap_or(true)
+}
+
+fn empty_text_part() -> BodyStructure {
+    BodyStructure::Text(TextPart {
+        subtype: "plain".to_string(),
+        parameters: vec![],
+        id: None,
+        description: None,
+        encoding: "7BIT".to_string(),
+        size: 0,
+        lines: 0,
+        md5: None,
+        disposition: None,
+        language: None,
+        location: None,
+    })
 }
 
 fn parse_content_disposition(part: &ParsedMail) -> Option<(String, Vec<(String, String)>)> {
@@ -214,6 +277,29 @@ pub fn bodystructure_to_string(structure: &BodyStructure, include_extension: boo
             }
             result
         }
+        BodyStructure::Basic(basic) => {
+            let mut result = format!(
+                r#"("{}" "{}" {} {} {} "{}" {} {})"#,
+                basic.kind,
+                basic.subtype,
+                params_to_string(&basic.parameters),
+                option_to_string(&basic.id),
+                option_to_string(&basic.description),
+                basic.encoding,
+                basic.size,
+                option_to_string(&basic.md5),
+            );
+            if include_extension {
+                result = result[..result.len() - 1].to_string();
+                result.push_str(&format!(
+                    " {} {} {})",
+                    disposition_to_string(&basic.disposition),
+                    language_to_string(&basic.language),
+                    option_to_string(&basic.location)
+                ));
+            }
+            result
+        }
         BodyStructure::Multipart(multipart) => {
             let parts = multipart
                 .parts
@@ -221,26 +307,24 @@ pub fn bodystructure_to_string(structure: &BodyStructure, include_extension: boo
                 .map(|p| bodystructure_to_string(p, include_extension))
                 .collect::<Vec<_>>()
                 .join(" ");
-            let mut result = format!(
-                r#"({} "{}" {})"#,
-                parts,
-                multipart.subtype,
-                params_to_string(&multipart.parameters)
-            );
             if include_extension {
-                result = result[..result.len() - 1].to_string();
-                result.push_str(&format!(
-                    " {} {} {})",
+                format!(
+                    r#"({} "{}" {} {} {} {})"#,
+                    parts,
+                    multipart.subtype,
+                    params_to_string(&multipart.parameters),
                     disposition_to_string(&multipart.disposition),
                     language_to_string(&multipart.language),
                     option_to_string(&multipart.location)
-                ));
+                )
+            } else {
+                format!(r#"({} "{}")"#, parts, multipart.subtype)
             }
-            result
         }
         BodyStructure::Message(message) => {
             let mut result = format!(
-                r#"("MESSAGE" "RFC822" {} {} {} "{}" {} {} {} {})"#,
+                r#"("MESSAGE" "{}" {} {} {} "{}" {} {} {} {})"#,
+                message.subtype.to_ascii_uppercase(),
                 params_to_string(&message.parameters),
                 option_to_string(&message.id),
                 option_to_string(&message.description),
@@ -368,13 +452,13 @@ JVBERi0xLjMKJcTl8uXrp/Og0MTGCjQgMCBvYmoKPDwgL0xlbmd0aCA1IDAgUiAvRmlsdGVyIC9GbGF0
         let body_result = bodystructure_to_string(&structure, false);
         assert_eq!(
             body_result,
-            r#"(("TEXT" "plain" ("charset" "utf-8") NIL NIL "utf-8" 37 1) ("APPLICATION" "pdf" ("name" "document.pdf") NIL NIL "base64" 96 NIL) "MIXED")"#
+            r#"(("TEXT" "plain" ("charset" "utf-8") NIL NIL "utf-8" 37 1) ("APPLICATION" "pdf" ("name" "document.pdf") NIL NIL "base64" 0 NIL) "MIXED")"#
         );
 
         let bodystructure_result = bodystructure_to_string(&structure, true);
         assert_eq!(
             bodystructure_result,
-            r#"(("TEXT" "plain" ("charset" "utf-8") NIL NIL "utf-8" 37 1 NIL (inline NIL) NIL NIL) ("APPLICATION" "pdf" ("name" "document.pdf") NIL NIL "base64" 96 NIL NIL (attachment ("filename" "document.pdf")) NIL NIL) "MIXED" NIL NIL NIL NIL)"#
+            r#"(("TEXT" "plain" ("charset" "utf-8") NIL NIL "utf-8" 37 1 NIL (inline NIL) NIL NIL) ("APPLICATION" "pdf" ("name" "document.pdf") NIL NIL "base64" 0 NIL (attachment ("filename" "document.pdf")) NIL NIL) "MIXED" NIL NIL NIL NIL)"#
         );
     }
 
@@ -418,13 +502,13 @@ Content-Disposition: attachment; filename="data.bin"
         let body_result = bodystructure_to_string(&structure, false);
         assert_eq!(
             body_result,
-            r#"(("TEXT" "plain" ("charset" "utf-8") NIL NIL "utf-8" 39 1) (("TEXT" "plain" ("charset" "utf-8") NIL NIL "utf-8" 31 1) ("TEXT" "html" ("charset" "utf-8") NIL NIL "utf-8" 61 1) "ALTERNATIVE") ("APPLICATION" "octet-stream" NIL NIL NIL "7BIT" 27 NIL) "MIXED")"#
+            r#"(("TEXT" "plain" ("charset" "utf-8") NIL NIL "utf-8" 38 1) (("TEXT" "plain" ("charset" "utf-8") NIL NIL "utf-8" 33 1) ("TEXT" "html" ("charset" "utf-8") NIL NIL "utf-8" 60 1) "ALTERNATIVE") ("APPLICATION" "octet-stream" NIL NIL NIL "7BIT" 29 NIL) "MIXED")"#
         );
 
         let bodystructure_result = bodystructure_to_string(&structure, true);
         assert_eq!(
             bodystructure_result,
-            r#"(("TEXT" "plain" ("charset" "utf-8") NIL NIL "utf-8" 39 1 NIL NIL NIL NIL) (("TEXT" "plain" ("charset" "utf-8") NIL NIL "utf-8" 31 1 NIL NIL NIL NIL) ("TEXT" "html" ("charset" "utf-8") NIL NIL "utf-8" 61 1 NIL NIL NIL NIL) "ALTERNATIVE" NIL NIL NIL NIL) ("APPLICATION" "octet-stream" NIL NIL NIL "7BIT" 27 NIL NIL (attachment ("filename" "data.bin")) NIL NIL) "MIXED" NIL NIL NIL NIL)"#
+            r#"(("TEXT" "plain" ("charset" "utf-8") NIL NIL "utf-8" 38 1 NIL NIL NIL NIL) (("TEXT" "plain" ("charset" "utf-8") NIL NIL "utf-8" 33 1 NIL NIL NIL NIL) ("TEXT" "html" ("charset" "utf-8") NIL NIL "utf-8" 60 1 NIL NIL NIL NIL) "ALTERNATIVE" NIL NIL NIL NIL) ("APPLICATION" "octet-stream" NIL NIL NIL "7BIT" 29 NIL (attachment ("filename" "data.bin")) NIL NIL) "MIXED" NIL NIL NIL NIL)"#
         );
     }
 
@@ -448,7 +532,7 @@ This is the content of the original message."#;
         assert_eq!(
             body_result,
             format!(
-                r#"("MESSAGE" "RFC822" NIL NIL NIL "7BIT" 185 ({} ("TEXT" "plain" NIL NIL NIL "7BIT" 46 1) 46) 5)"#,
+                r#"("MESSAGE" "RFC822" NIL NIL NIL "7BIT" 149 {} ("TEXT" "plain" NIL NIL NIL "7BIT" 44 1) 5)"#,
                 fetch::envelope_to_string(&parse_mail(raw_email.as_bytes()).unwrap())
             )
         );
@@ -457,7 +541,7 @@ This is the content of the original message."#;
         assert_eq!(
             bodystructure_result,
             format!(
-                r#"("MESSAGE" "RFC822" NIL NIL NIL "7BIT" 185 ({} ("TEXT" "plain" NIL NIL NIL "7BIT" 46 1 NIL NIL NIL NIL) 46) 5 NIL NIL NIL NIL)"#,
+                r#"("MESSAGE" "RFC822" NIL NIL NIL "7BIT" 149 {} ("TEXT" "plain" NIL NIL NIL "7BIT" 44 1 NIL NIL NIL NIL) 5 NIL NIL NIL NIL)"#,
                 fetch::envelope_to_string(&parse_mail(raw_email.as_bytes()).unwrap())
             )
         );

@@ -11,15 +11,15 @@
     - [x] support for multiple mailboxes and namespacing (see next example)
     - [X] support for command arguments inside quotes, eg `A000 SUBSCRIBE "Personal/School Stuff"` (did it dirtily)
     - [X] implement message sequence numbers
-    - [ ] all commands
+    - [X] all commands
 - [X] support for some SMTP extensions **MOST NOTABLY STARTTLS**
 - [X] support for implicit tls ports
 - [X] TLS with [tokio-rustls](https://crates.io/crates/tokio-rustls)
     - [X] use certs from porkbun (use their api to retrieve it)
-- [ ] dmarc, dkim and spf or whatever
-- [ ] parsing with nom (for difficult commands)
+- [X] dmarc, dkim and spf or whatever
+- [X] parsing with nom (for difficult commands)
     - [X] search
     - [X] fetch
-- [ ] caching
+- [X] caching
 
 other stuff?? add here!

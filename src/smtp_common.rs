@@ -182,7 +182,6 @@ impl SMTPStateMachine {
         tracing::trace!("Received {raw_msg} in state {:?}", self.state);
         let mut msg = raw_msg.split_whitespace();
         let command = msg.next().context("received empty command")?.to_lowercase();
-        dbg!(&command);
         match command.as_str() {
             "auth" => {
                 let auth_type = msg

@@ -27,8 +27,8 @@
 - [X] unselect
 - [X] expunge
 - [X] search
-- [ ] fetch
-- [ ] store
-- [ ] copy
-- [ ] move
+- [X] fetch
+- [X] store
+- [X] copy
+- [X] move
 - [X] uid

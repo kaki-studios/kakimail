@@ -1,10 +1,13 @@
-use anyhow::anyhow;
-use mailparse::{MailAddr, MailHeader, MailHeaderMap, ParsedMail, SingleInfo};
+use anyhow::{anyhow, Result};
+use mailparse::{MailAddr, MailHeaderMap, ParsedMail, SingleInfo};
 
 use crate::{
-    database,
+    database::{self, IMAPFlags, StoreMode},
     imap::{IMAPOp, IMAPState, ResponseInfo},
-    parsing::{self, imap::FetchArgs},
+    parsing::{
+        self,
+        imap::{FetchArgs, SectionMsgText, SectionSpec, SectionText},
+    },
 };
 
 pub struct Fetch;
@@ -38,109 +41,237 @@ pub(crate) async fn fetch_or_uid(
     let IMAPState::Selected(user) = state else {
         return Err(anyhow!("wrong state"));
     };
-    let (sequence_set, fetch_args) = parsing::imap::fetch(args)?;
-    //the most cursed type ever
-    let (seqnums, (uids, (dates, (mail_vec, flags)))): (
-        Vec<_>,
-        (Vec<_>, (Vec<_>, (Vec<_>, Vec<_>))),
-    ) = db
-        .lock()
-        .await
-        .fetch(sequence_set, uid, user.mailbox_id)?
-        .iter()
-        .cloned()
-        .unzip();
-    let parsed_mail: Vec<_> = mail_vec
-        .iter()
-        .map(String::as_bytes)
-        .flat_map(mailparse::parse_mail)
-        .collect();
-    tracing::info!("seqnums: {:?}", seqnums);
-    tracing::info!("uids: {:?}", uids);
-    tracing::info!("dates: {:?}", dates);
-    // tracing::info!("mail_vec: {:?}", seqnums);
-    tracing::info!("flags: {:?}", flags);
-    tracing::info!("----------------");
+    let (sequence_set, mut fetch_args) = parsing::imap::fetch(args)?;
+    let include_uid = uid && !fetch_args.iter().any(|arg| matches!(arg, FetchArgs::Uid));
+    if include_uid {
+        fetch_args.insert(0, FetchArgs::Uid);
+    }
 
-    let mut _final_vec: Vec<String> = vec![];
-    for ((((seqnum, uid), date), mail), flag) in seqnums
-        .iter()
-        .zip(uids)
-        .zip(dates)
-        .zip(parsed_mail)
-        .zip(flags)
-    {
-        let mut temp_buf = format!("* {seqnum} FETCH (");
+    let should_mark_seen = !user.read_only
+        && fetch_args.iter().any(|arg| {
+            matches!(
+                arg,
+                FetchArgs::Body(_, _)
+                    | FetchArgs::Binary(_, _)
+                    | FetchArgs::RFC822
+                    | FetchArgs::RFC822Text
+            )
+        });
+    if should_mark_seen {
+        db.lock().await.store_flags(
+            user.mailbox_id,
+            sequence_set.clone(),
+            uid,
+            StoreMode::Add,
+            &[IMAPFlags::Seen],
+        )?;
+    }
+
+    let rows = db.lock().await.fetch(sequence_set, uid, user.mailbox_id)?;
+
+    let mut final_vec: Vec<Vec<u8>> = vec![];
+    for row in rows {
+        let mail = mailparse::parse_mail(row.data.as_bytes())?;
+        let mut temp_buf = format!("* {} FETCH (", row.seqnum).into_bytes();
         for item in &fetch_args {
-            let data = match item {
-                //TODO:
-                //match the item, then extract info from parse_mail accordingly, format as
-                //String, add to a vec
-                FetchArgs::InternalDate => {
-                    format!("INTERNALDATE \"{}\" ", date.format("%d-%b-%Y %H:%M:%S %z"))
+            match item {
+                FetchArgs::InternalDate => temp_buf.extend_from_slice(
+                    format!(
+                        "INTERNALDATE \"{}\" ",
+                        row.date.format("%d-%b-%Y %H:%M:%S %z")
+                    )
+                    .as_bytes(),
+                ),
+                FetchArgs::Uid => {
+                    temp_buf.extend_from_slice(format!("UID {} ", row.uid).as_bytes())
                 }
-                FetchArgs::Uid => format!("UID {uid} "),
-                FetchArgs::Flags => {
-                    format!("FLAGS ({}) ", database::db_flag_to_readable_flag(&flag))
+                FetchArgs::Flags => temp_buf.extend_from_slice(
+                    format!(
+                        "FLAGS ({}) ",
+                        database::db_flag_to_readable_flag(&row.flags)
+                    )
+                    .as_bytes(),
+                ),
+                FetchArgs::RFC822 => append_named_literal(&mut temp_buf, "RFC822", mail.raw_bytes),
+                FetchArgs::RFC822Header => {
+                    let headers = headers_bytes(&mail, None, false);
+                    append_named_literal(&mut temp_buf, "RFC822.HEADER", &headers);
                 }
-                FetchArgs::RFC822Size => format!("RFC822.SIZE {} ", mail.raw_bytes.len()),
-                FetchArgs::Envelope => envelope_to_string(&mail),
+                FetchArgs::RFC822Size => temp_buf
+                    .extend_from_slice(format!("RFC822.SIZE {} ", mail.raw_bytes.len()).as_bytes()),
+                FetchArgs::RFC822Text => {
+                    let body = mail.get_body_raw()?;
+                    append_named_literal(&mut temp_buf, "RFC822.TEXT", &body);
+                }
+                FetchArgs::Envelope => {
+                    temp_buf.extend_from_slice(envelope_to_string(&mail).as_bytes())
+                }
                 FetchArgs::BodyNoArgs => {
                     let bodystruct = super::bodystructure::build_bodystructure(&mail);
-                    let mut result =
-                        super::bodystructure::bodystructure_to_string(&bodystruct, false);
-                    result.push(' ');
-                    result
+                    let result = super::bodystructure::bodystructure_to_string(&bodystruct, false);
+                    temp_buf.extend_from_slice(format!("BODY {} ", result).as_bytes());
                 }
                 FetchArgs::BodyStructure => {
                     let bodystruct = super::bodystructure::build_bodystructure(&mail);
-                    let mut result =
-                        super::bodystructure::bodystructure_to_string(&bodystruct, true);
-                    result.push(' ');
-                    result
+                    let result = super::bodystructure::bodystructure_to_string(&bodystruct, true);
+                    temp_buf.extend_from_slice(format!("BODYSTRUCTURE {} ", result).as_bytes());
                 }
-                FetchArgs::Body(sectionspec, opt) => {
-                    //TODO
-                    String::new()
+                FetchArgs::Body(section, partial) | FetchArgs::BodyPeek(section, partial) => {
+                    append_literal_fetch_item(&mut temp_buf, "BODY", section, *partial, &mail)?;
                 }
-                FetchArgs::BinarySize(sects) => {
-                    //NOTE: idk if this is correct
-                    let mut temp = None;
-                    for i in sects {
-                        if temp.is_none() {
-                            temp = mail.subparts.get(*i as usize);
-                        } else {
-                            temp = temp.map(|m| m.subparts.get(*i as usize)).flatten();
-                        }
-                    }
-                    // temp.map(|i| i.raw_bytes.len()).unwrap_or(0);
-                    dbg!(temp.map(|i| i.raw_bytes.len()).unwrap_or(0), temp);
-
-                    String::new()
+                FetchArgs::Binary(section, partial) | FetchArgs::BinaryPeek(section, partial) => {
+                    append_literal_fetch_item(
+                        &mut temp_buf,
+                        "BINARY",
+                        &SectionSpec::Other(section.clone(), None),
+                        *partial,
+                        &mail,
+                    )?;
                 }
-                _ => String::new(),
-            };
-            temp_buf.extend(data.chars());
+                FetchArgs::BinarySize(section) => {
+                    let data = section_bytes(&SectionSpec::Other(section.clone(), None), &mail)?;
+                    temp_buf.extend_from_slice(
+                        format!("BINARY.SIZE[{}] {} ", render_part_path(section), data.len())
+                            .as_bytes(),
+                    );
+                }
+            }
         }
-        //trim the trailing space
-        temp_buf = temp_buf.trim_end().to_string();
-        temp_buf.extend(")\r\n".chars());
-
-        _final_vec.push(temp_buf);
+        while temp_buf.last() == Some(&b' ') {
+            temp_buf.pop();
+        }
+        temp_buf.extend_from_slice(b")\r\n");
+        final_vec.push(temp_buf);
     }
-    _final_vec.push(format!("{tag} OK FETCH completed\r\n"));
-    // for i in &_final_vec {
-    //     tracing::debug!("{i}");
-    // }
+    final_vec.push(format!("{tag} OK FETCH completed\r\n").into_bytes());
 
-    Ok((
-        _final_vec
+    Ok((final_vec, state, ResponseInfo::Regular))
+}
+
+fn append_named_literal(buf: &mut Vec<u8>, name: &str, data: &[u8]) {
+    buf.extend_from_slice(format!("{} {{{}}}\r\n", name, data.len()).as_bytes());
+    buf.extend_from_slice(data);
+    buf.push(b' ');
+}
+
+fn append_literal_fetch_item(
+    buf: &mut Vec<u8>,
+    name: &str,
+    section: &SectionSpec,
+    partial: Option<(i32, i32)>,
+    mail: &ParsedMail,
+) -> Result<()> {
+    let mut data = section_bytes(section, mail)?;
+    if let Some((start, count)) = partial {
+        let start = start.max(0) as usize;
+        let count = count.max(0) as usize;
+        data = data.into_iter().skip(start).take(count).collect();
+    }
+    let rendered_section = render_section(section);
+    buf.extend_from_slice(
+        format!("{}[{}] {{{}}}\r\n", name, rendered_section, data.len()).as_bytes(),
+    );
+    buf.extend_from_slice(&data);
+    buf.push(b' ');
+    Ok(())
+}
+
+fn section_bytes(section: &SectionSpec, mail: &ParsedMail) -> Result<Vec<u8>> {
+    match section {
+        SectionSpec::MsgText(msgtext) => msgtext_bytes(msgtext, mail),
+        SectionSpec::Other(parts, text) => {
+            let target = select_part(mail, parts).unwrap_or(mail);
+            match text {
+                None => Ok(target.raw_bytes.to_vec()),
+                Some(SectionText::Mime) => Ok(headers_bytes(target, None, false)),
+                Some(SectionText::MsgText(msgtext)) => msgtext_bytes(msgtext, target),
+            }
+        }
+    }
+}
+
+fn select_part<'a, 'b>(mail: &'b ParsedMail<'a>, parts: &[i32]) -> Option<&'b ParsedMail<'a>> {
+    let mut current = mail;
+    for part in parts {
+        let idx = (*part).checked_sub(1)? as usize;
+        current = current.subparts.get(idx)?;
+    }
+    Some(current)
+}
+
+fn msgtext_bytes(msgtext: &SectionMsgText, mail: &ParsedMail) -> Result<Vec<u8>> {
+    match msgtext {
+        SectionMsgText::Header => Ok(headers_bytes(mail, None, false)),
+        SectionMsgText::HeaderFields(fields) => Ok(headers_bytes(mail, Some(fields), false)),
+        SectionMsgText::HeaderFieldsNot(fields) => Ok(headers_bytes(mail, Some(fields), true)),
+        SectionMsgText::Text => Ok(mail.get_body_raw()?),
+    }
+}
+
+fn headers_bytes(mail: &ParsedMail, fields: Option<&[String]>, invert: bool) -> Vec<u8> {
+    let normalized_fields = fields
+        .map(|items| {
+            items
+                .iter()
+                .map(|i| i.to_ascii_lowercase())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mut result = Vec::new();
+    for header in &mail.headers {
+        let key = header.get_key();
+        let selected = normalized_fields
             .iter()
-            .map(|i| i.as_bytes().to_vec())
-            .collect::<Vec<_>>(),
-        state,
-        ResponseInfo::Regular,
-    ))
+            .any(|field| field.eq_ignore_ascii_case(&key));
+        if fields.is_some() && selected == invert {
+            continue;
+        }
+        result.extend_from_slice(format!("{}: {}\r\n", key, header.get_value()).as_bytes());
+    }
+    result.extend_from_slice(b"\r\n");
+    result
+}
+
+fn render_part_path(parts: &[i32]) -> String {
+    parts
+        .iter()
+        .map(i32::to_string)
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+fn render_section(section: &SectionSpec) -> String {
+    match section {
+        SectionSpec::MsgText(msgtext) => render_msgtext(msgtext),
+        SectionSpec::Other(parts, None) if parts.is_empty() => String::new(),
+        SectionSpec::Other(parts, None) => render_part_path(parts),
+        SectionSpec::Other(parts, Some(SectionText::Mime)) => {
+            join_part_and_text(parts, "MIME".to_string())
+        }
+        SectionSpec::Other(parts, Some(SectionText::MsgText(msgtext))) => {
+            join_part_and_text(parts, render_msgtext(msgtext))
+        }
+    }
+}
+
+fn join_part_and_text(parts: &[i32], text: String) -> String {
+    let path = render_part_path(parts);
+    if path.is_empty() {
+        text
+    } else {
+        format!("{}.{}", path, text)
+    }
+}
+
+fn render_msgtext(msgtext: &SectionMsgText) -> String {
+    match msgtext {
+        SectionMsgText::Header => "HEADER".to_string(),
+        SectionMsgText::HeaderFields(fields) => format!("HEADER.FIELDS ({})", fields.join(" ")),
+        SectionMsgText::HeaderFieldsNot(fields) => {
+            format!("HEADER.FIELDS.NOT ({})", fields.join(" "))
+        }
+        SectionMsgText::Text => "TEXT".to_string(),
+    }
 }
 
 fn parenthesized_list_of_addr_structures(input: &mailparse::MailHeader) -> String {

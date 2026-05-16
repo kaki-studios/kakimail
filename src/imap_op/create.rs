@@ -15,20 +15,20 @@ impl IMAPOp for Create {
         crate::imap::IMAPState,
         crate::imap::ResponseInfo,
     )> {
-        let mut msg = args.split_whitespace();
-        let IMAPState::Authed(id) = state else {
-            return Err(anyhow!("bad state"));
+        let id = match state {
+            IMAPState::Authed(id) => id,
+            IMAPState::Selected(selected) => selected.user_id,
+            _ => return Err(anyhow!("bad state")),
         };
-        let Some(mut mailbox_name) = msg.next() else {
+        let parsed = crate::parsing::imap::parse_list(args)
+            .map_err(|e| anyhow!("invalid CREATE args: {:?}", e))?;
+        let Some(mailbox_name) = parsed.first() else {
             let resp = format!("{} BAD didn't provide a name\r\n", tag)
                 .as_bytes()
                 .to_vec();
 
             return Ok((vec![resp], state, ResponseInfo::Regular));
         };
-        if mailbox_name.starts_with("\"") && mailbox_name.ends_with("\"") {
-            mailbox_name = &mailbox_name[1..mailbox_name.len()];
-        }
         match db.lock().await.create_mailbox(id, mailbox_name).await {
             Result::Ok(_) => Ok((
                 vec![format!("{} OK CREATE completed\r\n", tag)

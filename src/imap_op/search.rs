@@ -413,7 +413,7 @@ impl FromStr for Sequence {
                 (num_str1, num_str2) => {
                     let num1 = num_str1.parse::<u32>()?;
                     let num2 = num_str2.parse::<u32>()?;
-                    Ok(Sequence::Range(num1..=num2))
+                    Ok(Sequence::Range(num1.min(num2)..=num1.max(num2)))
                 }
             },
             None => {

@@ -1,7 +1,5 @@
-use anyhow::{anyhow, Context};
-use nom::AsBytes;
-
 use crate::imap::{IMAPOp, IMAPState, ResponseInfo, SelectedState};
+use anyhow::{anyhow, Context};
 
 pub struct Select;
 
@@ -49,15 +47,16 @@ pub(super) async fn select_or_examine(
             ));
         }
     };
-    let mut msg = args.split_whitespace();
-    let mailbox = match msg.next().context("should provide mailbox name") {
-        Err(_) => {
+    let parsed = crate::parsing::imap::parse_list(args)
+        .map_err(|e| anyhow!("invalid SELECT args: {:?}", e))?;
+    let mailbox = match parsed.first() {
+        None => {
             let resp = format!("{} BAD missing arguments\r\n", tag)
                 .as_bytes()
                 .to_vec();
             return Ok((vec![resp], state, ResponseInfo::Regular));
         }
-        Result::Ok(a) => a.chars().filter(|c| c != &'"').collect::<String>(),
+        Some(a) => a.to_string(),
     };
     let db = db.lock().await;
 
@@ -69,12 +68,7 @@ pub(super) async fn select_or_examine(
         Result::Ok(a) => a,
     };
 
-    let unix_time = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .context("Time shouldn't go backwards")?;
-    let seconds: u32 = unix_time.as_secs().try_into()?;
-
-    let uid_validity = format!("* OK [UIDVALIDITY {}]\r\n", seconds)
+    let uid_validity = format!("* OK [UIDVALIDITY {}]\r\n", db.mailbox_uidvalidity(m_id))
         .as_bytes()
         .to_vec();
 
@@ -102,9 +96,12 @@ pub(super) async fn select_or_examine(
     } else {
         NO_PERMANENT_FLAGS
     };
-    let mailbox_list = format!("* LIST () \"/\" {}\r\n", mailbox)
-        .as_bytes()
-        .to_vec();
+    let mailbox_list = format!(
+        "* LIST () \"/\" {}\r\n",
+        crate::parsing::imap::quote_string(&mailbox)
+    )
+    .as_bytes()
+    .to_vec();
     let response = vec![
         count_string,
         uid_validity,

@@ -4,7 +4,8 @@ use crate::imap::{IMAPOp, ResponseInfo};
 
 pub struct Capability;
 
-const CAPABILITY: &'static [u8] = b"* CAPABILITY IMAP4rev2 STARTTLS IMAP4rev1 AUTH=PLAIN\r\n";
+const CAPABILITY: &'static [u8] =
+    b"* CAPABILITY IMAP4rev2 IMAP4rev1 STARTTLS AUTH=PLAIN UIDPLUS MOVE LITERAL+\r\n";
 impl IMAPOp for Capability {
     async fn process(
         tag: &str,

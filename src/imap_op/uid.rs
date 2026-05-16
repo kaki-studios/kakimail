@@ -17,9 +17,12 @@ impl IMAPOp for Uid {
     )> {
         let (cmd, rest) = args.split_once(" ").context("should be parseable")?;
         match cmd.to_lowercase().as_str() {
-            //TODO copy, move, fetch, store
+            "copy" => super::copy::copy_or_uid(tag, rest, state, db, true).await,
             "expunge" => super::expunge::expunge_or_uid(tag, rest, state, db, true).await,
+            "fetch" => super::fetch::fetch_or_uid(tag, rest, state, db, true).await,
+            "move" => super::move_op::move_or_uid(tag, rest, state, db, true).await,
             "search" => super::search::search_or_uid(tag, rest, state, db, true).await,
+            "store" => super::store::store_or_uid(tag, rest, state, db, true).await,
             x => Err(anyhow!("uid command unknown: {:?}", x)),
         }
     }

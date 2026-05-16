@@ -1,4 +1,4 @@
-use std::{any, char, str::FromStr};
+use std::str::FromStr;
 
 use crate::{
     imap_op::search::{ReturnOptions, SearchKeys, SequenceSet},
@@ -26,6 +26,46 @@ pub fn rfc2822_to_date(input: &str) -> Result<String> {
     //could make more efficient
     let date = chrono::NaiveDate::parse_from_str(input, super::parsing::MAIL_NAIVE_DATE_FMT)?;
     Ok(date.format(parsing::DB_DATE_FMT).to_string())
+}
+
+fn canonical_mailbox_name(input: &str) -> String {
+    let trimmed = input.trim_matches('"');
+    if trimmed.eq_ignore_ascii_case("INBOX") {
+        "INBOX".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MailRow {
+    pub seqnum: i32,
+    pub uid: i32,
+    pub date: DateTime<FixedOffset>,
+    pub sender: String,
+    pub recipients: String,
+    pub data: String,
+    pub flags: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct FlagUpdate {
+    pub seqnum: i32,
+    pub uid: i32,
+    pub flags: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct CopyResult {
+    pub source_uid: i32,
+    pub dest_uid: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StoreMode {
+    Replace,
+    Add,
+    Remove,
 }
 
 pub struct DBClient {
@@ -94,6 +134,7 @@ impl DBClient {
             "PRAGMA foreign_keys = ON;
             CREATE TABLE IF NOT EXISTS mailboxes (id integer primary key not null, name text, user_id integer not null, flags integer, FOREIGN KEY(user_id) REFERENCES users(id));
             CREATE INDEX IF NOT EXISTS mailbox_foreign_key ON mailboxes(user_id);
+            CREATE INDEX IF NOT EXISTS mailbox_user_name ON mailboxes(user_id, name);
             CREATE INDEX IF NOT EXISTS mailbox_id ON mailboxes(id);"
             // INSERT OR IGNORE INTO mailboxes VALUES (0, 'INBOX', 0, 0)"
             //NOTE: testing only
@@ -153,7 +194,7 @@ impl DBClient {
         mail: Mail,
         mailbox_id: i32,
         datetime: Option<chrono::DateTime<FixedOffset>>,
-    ) -> Result<()> {
+    ) -> Result<i32> {
         self.changes.send("* 1 EXISTS\r\n".to_owned()).await?;
         let time = if let Some(x) = datetime {
             x.format(crate::parsing::DB_DATETIME_FMT).to_string()
@@ -179,7 +220,7 @@ impl DBClient {
                 "00000",
             ),
         )?;
-        Ok(())
+        Ok(next_uid as i32)
     }
 
     /// Cleans up old mail
@@ -217,7 +258,8 @@ impl DBClient {
         i64::try_from(result.next()?.context("no rows")?.get::<_, i32>(0)?).map_err(|e| anyhow!(e))
     }
     pub async fn get_mailbox_id(&self, user_id: i32, mailbox_name: &str) -> Result<i32> {
-        if let Ok(x) = self.get_mailbox_id_no_inbox(user_id, mailbox_name).await {
+        let mailbox_name = canonical_mailbox_name(mailbox_name);
+        if let Ok(x) = self.get_mailbox_id_no_inbox(user_id, &mailbox_name).await {
             return Ok(x);
         }
         if mailbox_name != "INBOX" {
@@ -235,6 +277,7 @@ impl DBClient {
         Ok(result)
     }
     async fn get_mailbox_id_no_inbox(&self, user_id: i32, mailbox_name: &str) -> Result<i32> {
+        let mailbox_name = canonical_mailbox_name(mailbox_name);
         let result = self
             .db
             .prepare("SELECT id FROM mailboxes WHERE user_id = ?1 AND name = ?2")?
@@ -280,10 +323,18 @@ impl DBClient {
         return Some(*values);
     }
     pub async fn create_mailbox(&self, user_id: i32, mailbox_name: &str) -> Result<()> {
+        let mailbox_name = canonical_mailbox_name(mailbox_name);
+        if self
+            .get_mailbox_id_no_inbox(user_id, &mailbox_name)
+            .await
+            .is_ok()
+        {
+            return Err(anyhow!("Mailbox already exists"));
+        }
         let rownum = self
             .db
-            .prepare("INSERT IF NOT EXISTS INTO mailboxes(name, user_id, flags) VALUES(?, ?, 0) ")?
-            .execute(params![mailbox_name, user_id])?;
+            .prepare("INSERT INTO mailboxes(name, user_id, flags) VALUES(?, ?, 0)")?
+            .execute(params![&mailbox_name, user_id])?;
         if rownum == 0 {
             tracing::warn!("couldn't create mailbox: uid: {user_id}, mbox name: {mailbox_name}");
             Err(anyhow!("Mailbox already exists"))
@@ -302,60 +353,72 @@ impl DBClient {
         Ok(())
     }
     pub async fn rename_mailbox(&self, new_name: &str, mailbox_id: i32) -> Result<()> {
+        let new_name = canonical_mailbox_name(new_name);
         self.db
             .prepare("UPDATE mailboxes SET name = ? WHERE id = ?")?
             .execute(params![new_name, mailbox_id])?;
         Ok(())
     }
     pub async fn get_mailbox_names_for_user(&self, user_id: i32) -> Option<Vec<String>> {
+        Some(
+            self.get_mailboxes_for_user(user_id)
+                .await
+                .ok()?
+                .into_iter()
+                .map(|(name, _)| name)
+                .collect(),
+        )
+    }
+
+    pub async fn get_mailboxes_for_user(&self, user_id: i32) -> Result<Vec<(String, bool)>> {
         let mut result = self
             .db
-            .prepare("SELECT name FROM mailboxes WHERE user_id = ? LIMIT 1")
-            .ok()?;
-        let x = result.query([user_id]).ok()?;
-        let vec = x
-            .mapped(|i| i.get::<_, String>(0))
+            .prepare("SELECT name, flags FROM mailboxes WHERE user_id = ? ORDER BY name")?;
+        let x = result.query([user_id])?;
+        let mut vec = x
+            .mapped(|i| Ok((i.get::<_, String>(0)?, i.get::<_, i32>(1)? != 0)))
             .flatten()
-            .collect::<Vec<String>>();
+            .collect::<Vec<(String, bool)>>();
         if vec.is_empty() {
             tracing::warn!("no mailboxes for uid: {user_id}, creating inbox");
-            self.create_mailbox(user_id, "INBOX").await.ok()?;
-            Some(vec!["INBOX".to_string()])
-        } else {
-            Some(vec)
+            self.create_mailbox(user_id, "INBOX").await.ok();
+            vec.push(("INBOX".to_string(), false));
         }
+        Ok(vec)
     }
-    pub async fn expunge(&self, mailbox_id: i32, uid: Option<(i32, i32)>) -> Result<Vec<i32>> {
-        self.changes.send("* 1 EXPUNGE\r\n".to_owned()).await?;
+    pub async fn expunge(&self, mailbox_id: i32, uid: Option<SequenceSet>) -> Result<Vec<i32>> {
+        self.changes.send("* 1 EXPUNGE\r\n".to_owned()).await.ok();
         let deleted = IMAPFlags::Deleted.to_string();
-        let mut y;
-        let results = if let Some((start, end)) = uid {
-            y = self.db.prepare(
-                "DELETE FROM mail WHERE uid BETWEEN ? AND ? AND flags like ? RETURNING seqnum",
-            )?;
-            y.query(params![start.clone(), end.clone(), deleted])?
-        } else {
-            y = self.db.prepare(
-                "DELETE FROM mail WHERE mailbox_id = ? AND flags like ? RETURNING seqnum",
-            )?;
-            y.query(params![mailbox_id, deleted])?
-        };
-        //borrow checker issues
-        let results = results
-            .mapped(|x| x.get::<_, i32>(0))
-            .flatten()
-            .collect::<Vec<_>>();
-        for seqnum in &results {
-            self.db
-                .prepare("UPDATE mail SET seqnum = seqnum - 1 WHERE seqnum > ?")?
-                .execute([*seqnum])?;
+        let mut sql =
+            "SELECT seqnum, uid FROM mail WHERE mailbox_id = ? AND flags LIKE ?".to_string();
+        let mut uid_values = vec![];
+        if let Some(uid_set) = uid {
+            let (uid_sql, raw_values) = utils::sequence_set_to_sql(uid_set, "uid");
+            uid_values = raw_values;
+            sql.push_str(" AND ");
+            sql.push_str(&uid_sql);
         }
-        let sequence_nums = results
-            .iter()
-            .enumerate()
-            .map(|(i, val)| *val - i as i32)
-            .collect();
-        Ok(sequence_nums)
+        let mut values: Vec<&dyn ToSql> = vec![&mailbox_id, &deleted];
+        values.extend(uid_values.iter().flat_map(value_to_param));
+        sql.push_str(" ORDER BY seqnum");
+
+        let rows = self
+            .db
+            .prepare(&sql)?
+            .query_map(values.as_slice(), |row| {
+                Ok((row.get::<_, i32>(0)?, row.get::<_, i32>(1)?))
+            })?
+            .flatten()
+            .collect::<Vec<(i32, i32)>>();
+        for (_, uid) in &rows {
+            self.db
+                .prepare("DELETE FROM mail WHERE uid = ?")?
+                .execute([*uid])?;
+        }
+        self.renumber_mailbox(mailbox_id)?;
+        Ok(adjust_expunge_sequence_numbers(
+            rows.into_iter().map(|(seqnum, _)| seqnum).collect(),
+        ))
     }
 
     pub async fn mail_count_with_flags(
@@ -366,7 +429,7 @@ impl DBClient {
         let mut flagnum: [char; 5] = ['_'; 5]; //five flags
         for (flag, on) in flags {
             let indicator = if on { '1' } else { '0' };
-            flagnum[flag as usize] = indicator;
+            flagnum[flag.index()] = indicator;
         }
         tracing::debug!("flagnum is {:?}", flagnum);
         Ok(self
@@ -377,6 +440,20 @@ impl DBClient {
             .context("no rows")?
             .get::<_, i32>(0)?)
     }
+    pub async fn status_size(&self, mailbox_id: i32) -> Result<i64> {
+        Ok(self
+            .db
+            .prepare("SELECT COALESCE(SUM(length(data)), 0) FROM mail WHERE mailbox_id = ?")?
+            .query([mailbox_id])?
+            .next()?
+            .context("no rows")?
+            .get::<_, i64>(0)?)
+    }
+
+    pub fn mailbox_uidvalidity(&self, mailbox_id: i32) -> i32 {
+        mailbox_id.max(1)
+    }
+
     pub async fn change_mailbox_subscribed(&self, mailbox_id: i32, subscribed: bool) -> Result<()> {
         let flag = if subscribed { 1 } else { 0 };
         self.db
@@ -389,8 +466,6 @@ impl DBClient {
         mailbox_id: i32,
         uid: bool,
     ) -> Result<(String, Vec<Value>)> {
-        dbg!(&search_args);
-
         let (mut raw_str, mut values) = (String::new(), vec![]);
         search_args
             .search_keys
@@ -401,21 +476,13 @@ impl DBClient {
                 raw_str.extend(i.0.chars());
                 raw_str.extend(" AND ".chars());
             });
-        let requirements = raw_str
-            //dirty
-            .strip_suffix(" AND ")
-            //TODO will fail if search_keys is empty
-            .context("should always happen")?;
+        let requirements = raw_str.strip_suffix(" AND ").unwrap_or("1 = 1");
         let select = if uid { "uid" } else { "seqnum" };
 
         let final_str = format!(
             "SELECT {} FROM mail WHERE mailbox_id = {} AND {}",
             select, mailbox_id, requirements
         );
-        dbg!(&final_str);
-        for i in &values {
-            dbg!(i);
-        }
         Ok((final_str, values))
     }
     pub async fn exec_search_query(
@@ -467,7 +534,6 @@ impl DBClient {
                     SequenceSet::from(i32_result.clone()).to_string()
                 )),
                 ReturnOptions::Count => Some(format!("COUNT {}", i32_result.len())),
-                //TODO
                 ReturnOptions::Save => Some("".to_owned()),
             })
             .collect::<Vec<String>>()
@@ -475,15 +541,101 @@ impl DBClient {
         // println!("test_result: {}", fmt_result);
         Ok(fmt_result)
     }
-    ///fetches the raw data from the requested sequenceset nums
+    ///fetches the raw data from the requested sequence-set or uid-set nums
     pub fn fetch(
         &self,
         sequence_set: SequenceSet,
         uid: bool,
         mailbox_id: i32,
-        //         seqnum, uid,  date,                    data,   flags
-    ) -> Result<Vec<(i32, (i32, (DateTime<FixedOffset>, (String, String))))>> {
-        let (sql_str, values) = utils::sequence_set_to_sql(sequence_set, "seqnum");
+    ) -> Result<Vec<MailRow>> {
+        self.select_mail_rows(mailbox_id, sequence_set, uid)
+    }
+
+    pub fn store_flags(
+        &self,
+        mailbox_id: i32,
+        sequence_set: SequenceSet,
+        by_uid: bool,
+        mode: StoreMode,
+        flags: &[IMAPFlags],
+    ) -> Result<Vec<FlagUpdate>> {
+        let rows = self.select_mail_rows(mailbox_id, sequence_set, by_uid)?;
+        let mut updates = Vec::new();
+        for row in rows {
+            let new_flags = apply_flags(&row.flags, flags, mode);
+            self.db
+                .prepare("UPDATE mail SET flags = ? WHERE uid = ?")?
+                .execute(params![new_flags, row.uid])?;
+            updates.push(FlagUpdate {
+                seqnum: row.seqnum,
+                uid: row.uid,
+                flags: new_flags,
+            });
+        }
+        Ok(updates)
+    }
+
+    pub async fn copy_messages(
+        &self,
+        src_mailbox_id: i32,
+        dest_mailbox_id: i32,
+        sequence_set: SequenceSet,
+        by_uid: bool,
+    ) -> Result<Vec<CopyResult>> {
+        let rows = self.select_mail_rows(src_mailbox_id, sequence_set, by_uid)?;
+        let mut next_uid = self.next_uid().await;
+        let mut next_seqnum = self.next_seqnum(dest_mailbox_id).await;
+        let mut copied = Vec::new();
+        for row in rows {
+            self.db.execute(
+                "INSERT INTO mail VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    next_uid as i32,
+                    next_seqnum as i32,
+                    row.date.format(parsing::DB_DATETIME_FMT).to_string(),
+                    row.sender,
+                    row.recipients,
+                    row.data,
+                    dest_mailbox_id,
+                    row.flags,
+                ],
+            )?;
+            copied.push(CopyResult {
+                source_uid: row.uid,
+                dest_uid: next_uid as i32,
+            });
+            next_uid += 1;
+            next_seqnum += 1;
+        }
+        Ok(copied)
+    }
+
+    pub fn delete_messages(
+        &self,
+        mailbox_id: i32,
+        sequence_set: SequenceSet,
+        by_uid: bool,
+    ) -> Result<Vec<i32>> {
+        let rows = self.select_mail_rows(mailbox_id, sequence_set, by_uid)?;
+        for row in &rows {
+            self.db
+                .prepare("DELETE FROM mail WHERE uid = ?")?
+                .execute([row.uid])?;
+        }
+        self.renumber_mailbox(mailbox_id)?;
+        Ok(adjust_expunge_sequence_numbers(
+            rows.into_iter().map(|row| row.seqnum).collect(),
+        ))
+    }
+
+    fn select_mail_rows(
+        &self,
+        mailbox_id: i32,
+        sequence_set: SequenceSet,
+        by_uid: bool,
+    ) -> Result<Vec<MailRow>> {
+        let column = if by_uid { "uid" } else { "seqnum" };
+        let (sql_str, values) = utils::sequence_set_to_sql(sequence_set, column);
         let mut values = values
             .iter()
             .flat_map(|i| value_to_param(i))
@@ -491,39 +643,62 @@ impl DBClient {
         values.push(&mailbox_id);
 
         let sql_statement = format!(
-            "SELECT seqnum, uid, date, data, flags FROM mail WHERE {} AND mailbox_id = ?",
+            "SELECT seqnum, uid, date, sender, recipients, data, flags FROM mail WHERE {} AND mailbox_id = ? ORDER BY seqnum",
             sql_str
         );
         let mut stmt = self.db.prepare(&sql_statement)?;
-        //NOTE: if one row.get() fails, the whole thing fails
-        let result = stmt
+        let rows = stmt
             .query_map(values.as_slice(), |row| {
-                Ok((
-                    row.get::<_, i32>(0)?,
-                    (
-                        row.get::<_, i32>(1)?,
-                        (
-                            row.get::<_, DateTime<FixedOffset>>(2)?,
-                            (row.get::<_, String>(3)?, (row.get::<_, String>(4)?)),
-                        ),
-                    ),
-                ))
+                Ok(MailRow {
+                    seqnum: row.get::<_, i32>(0)?,
+                    uid: row.get::<_, i32>(1)?,
+                    date: row.get::<_, DateTime<FixedOffset>>(2)?,
+                    sender: row.get::<_, String>(3)?,
+                    recipients: row.get::<_, String>(4)?,
+                    data: row.get::<_, String>(5)?,
+                    flags: row.get::<_, String>(6)?,
+                })
             })?
             .map(|i| i.map_err(|e| e.into()))
-            .collect::<Result<Vec<(i32, (i32, (DateTime<FixedOffset>, (String, String))))>>>();
+            .collect::<Result<Vec<MailRow>>>()?;
+        Ok(rows)
+    }
 
-        result
+    fn renumber_mailbox(&self, mailbox_id: i32) -> Result<()> {
+        let uids = self
+            .db
+            .prepare("SELECT uid FROM mail WHERE mailbox_id = ? ORDER BY seqnum, uid")?
+            .query_map([mailbox_id], |row| row.get::<_, i32>(0))?
+            .flatten()
+            .collect::<Vec<_>>();
+        for (idx, uid) in uids.iter().enumerate() {
+            self.db
+                .prepare("UPDATE mail SET seqnum = ? WHERE uid = ?")?
+                .execute(params![(idx + 1) as i32, uid])?;
+        }
+        Ok(())
     }
 }
 
-#[repr(u8)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IMAPFlags {
-    Answered = 1 << 0,
-    Flagged = 1 << 1,
-    Deleted = 1 << 2,
-    Seen = 1 << 3,
-    Draft = 1 << 4,
+    Answered,
+    Flagged,
+    Deleted,
+    Seen,
+    Draft,
+}
+
+impl IMAPFlags {
+    pub fn index(self) -> usize {
+        match self {
+            IMAPFlags::Draft => 0,
+            IMAPFlags::Seen => 1,
+            IMAPFlags::Deleted => 2,
+            IMAPFlags::Flagged => 3,
+            IMAPFlags::Answered => 4,
+        }
+    }
 }
 
 impl ToString for IMAPFlags {
@@ -542,15 +717,53 @@ impl ToString for IMAPFlags {
 impl FromStr for IMAPFlags {
     type Err = anyhow::Error;
     fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
-        match s {
-            "\"\\Answered\"" => Ok(IMAPFlags::Answered),
-            "\"\\Flagged\"" => Ok(IMAPFlags::Flagged),
-            "\"\\Deleted\"" => Ok(IMAPFlags::Deleted),
-            "\"\\Seen\"" => Ok(IMAPFlags::Seen),
-            "\"\\Draft\"" => Ok(IMAPFlags::Draft),
+        match s
+            .trim()
+            .trim_matches('"')
+            .trim_start_matches('\\')
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "answered" => Ok(IMAPFlags::Answered),
+            "flagged" => Ok(IMAPFlags::Flagged),
+            "deleted" => Ok(IMAPFlags::Deleted),
+            "seen" => Ok(IMAPFlags::Seen),
+            "draft" => Ok(IMAPFlags::Draft),
             x => Err(anyhow!("invalid flag: {}", x)),
         }
     }
+}
+
+fn apply_flags(input: &str, flags: &[IMAPFlags], mode: StoreMode) -> String {
+    let mut chars = normalize_flag_string(input);
+    match mode {
+        StoreMode::Replace => chars = ['0'; 5],
+        StoreMode::Add | StoreMode::Remove => {}
+    }
+    for flag in flags {
+        chars[flag.index()] = match mode {
+            StoreMode::Remove => '0',
+            StoreMode::Replace | StoreMode::Add => '1',
+        };
+    }
+    chars.iter().collect()
+}
+
+fn normalize_flag_string(input: &str) -> [char; 5] {
+    let mut chars = ['0'; 5];
+    for (idx, c) in input.chars().take(5).enumerate() {
+        chars[idx] = if c == '1' { '1' } else { '0' };
+    }
+    chars
+}
+
+fn adjust_expunge_sequence_numbers(mut seqnums: Vec<i32>) -> Vec<i32> {
+    seqnums.sort_unstable();
+    seqnums
+        .into_iter()
+        .enumerate()
+        .map(|(idx, seqnum)| seqnum - idx as i32)
+        .collect()
 }
 
 pub fn db_flag_to_readable_flag(input: &str) -> String {

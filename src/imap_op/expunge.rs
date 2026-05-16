@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context};
+use std::str::FromStr;
 
 use crate::imap::{IMAPOp, IMAPState, ResponseInfo, SelectedState};
 
@@ -41,18 +42,9 @@ pub(super) async fn expunge_or_uid(
     let mut msg = args.split_whitespace();
 
     let uid_range = if uid {
-        let mut test = msg
-            .next()
-            .context("should provide range")?
-            .split_once(":")
-            .map(|(a, b)| (a.parse::<i32>().ok(), b.parse::<i32>().ok()))
-            .context("should work")?;
-        if test.0 > test.1 {
-            std::mem::swap(&mut test.0, &mut test.1);
-        }
-        //cool
-        //turn a (Option<T>, Option<T>) to a Option<(T, T)>
-        test.0.zip(test.1)
+        Some(crate::imap_op::search::SequenceSet::from_str(
+            msg.next().context("should provide uid sequence-set")?,
+        )?)
     } else {
         None
     };

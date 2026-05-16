@@ -11,7 +11,7 @@ A simple and portable SMTP server, written in pure Rust (🚀🚀🚀). Anyone c
 
 
 ## TO-DO:
-- [ ] Support for all IMAP4rev2 commands
+- [X] Support for all IMAP4rev2 commands
 
 
 ## insipiration

@@ -15,16 +15,26 @@ impl IMAPOp for Delete {
         crate::imap::IMAPState,
         crate::imap::ResponseInfo,
     )> {
-        let IMAPState::Authed(id) = state else {
-            return Err(anyhow!("bad state"));
+        let id = match state {
+            IMAPState::Authed(id) => id,
+            IMAPState::Selected(selected) => selected.user_id,
+            _ => return Err(anyhow!("bad state")),
         };
-        let mut msg = args.split_whitespace();
-        let Some(mailbox_name) = msg.next() else {
+        let parsed = crate::parsing::imap::parse_list(args)
+            .map_err(|e| anyhow!("invalid DELETE args: {:?}", e))?;
+        let Some(mailbox_name) = parsed.first() else {
             let resp = format!("{} BAD didn't provide a name\r\n", tag)
                 .as_bytes()
                 .to_vec();
             return Ok((vec![resp], state, ResponseInfo::Regular));
         };
+        if mailbox_name.eq_ignore_ascii_case("INBOX") {
+            return Ok((
+                vec![format!("{} NO DELETE failed: cannot delete INBOX\r\n", tag).into_bytes()],
+                state,
+                ResponseInfo::Regular,
+            ));
+        }
         let db = db.lock().await;
         let mailbox_id = db.get_mailbox_id(id, mailbox_name).await?;
         db.delete_mailbox(mailbox_id).await?;

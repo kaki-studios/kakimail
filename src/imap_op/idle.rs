@@ -19,7 +19,6 @@ impl IMAPOp for Idle {
         let IMAPState::Authed(_id) = state else {
             return Err(anyhow!("bad state"));
         };
-        dbg!(&args);
         if args == "" {
             Ok((vec![b"+ idling\r\n".to_vec()], state, ResponseInfo::Idle))
         } else {

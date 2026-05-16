@@ -22,6 +22,6 @@ reqwest = { version = "0.12.2", features = ["json"] }
 rusqlite = { version = "0.31.0", features = ["load_extension", "functions", "chrono"] }
 rustls-pemfile = "2.1.1"
 tokio = { version = "1.35.1", features = ["full"] }
-tokio-rustls = "0.26.0"
+tokio-rustls = { version = "0.26.0", default-features = false, features = ["ring", "logging", "tls12"] }
 tracing = "0.1.40"
 tracing-subscriber = { version= "0.3.18", features = ["env-filter"] }

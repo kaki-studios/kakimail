@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::{
+    net::{IpAddr, Ipv4Addr},
+    sync::Arc,
+};
 
 use crate::{smtp_common::*, tls::StreamType};
 use anyhow::*;
@@ -16,6 +19,7 @@ pub struct SmtpIncoming {
     pub db: Arc<Mutex<database::DBClient>>,
     pub domain: String,
     pub acceptor: tokio_rustls::TlsAcceptor,
+    pub peer_ip: IpAddr,
 }
 
 impl SmtpIncoming {
@@ -28,6 +32,10 @@ impl SmtpIncoming {
         implicit_tls: bool,
         acceptor: tokio_rustls::TlsAcceptor,
     ) -> Result<Self> {
+        let peer_ip = stream
+            .peer_addr()
+            .map(|addr| addr.ip())
+            .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED));
         let stream_type = if !implicit_tls {
             StreamType::Plain(stream)
         } else {
@@ -40,6 +48,7 @@ impl SmtpIncoming {
             db: Arc::new(Mutex::new(database::DBClient::new(tx).await?)),
             domain: domain_stripped,
             acceptor,
+            peer_ip,
         })
     }
 
@@ -86,6 +95,17 @@ impl SmtpIncoming {
     }
     ///saves the mail in the recipients' INBOXes
     async fn store_mail(&self, mail: &Mail) {
+        let auth = crate::email_auth::verify_incoming_mail(mail, self.peer_ip).await;
+        tracing::info!(
+            "incoming mail auth: spf={:?} dkim={:?} dmarc={:?}",
+            auth.spf,
+            auth.dkim,
+            auth.dmarc
+        );
+        if auth.reject {
+            tracing::warn!("rejecting incoming message after SPF/DMARC evaluation");
+            return;
+        }
         let db = self.db.lock().await;
         for i in &mail.to {
             //go from <user@domain.com> to user@domain.com. strip the angle brackets
@@ -99,7 +119,6 @@ impl SmtpIncoming {
                 tracing::warn!("no domain: {i}");
                 continue;
             };
-            dbg!(user, domain);
             if domain != self.domain {
                 tracing::warn!("invalid domain: {i}");
                 continue;

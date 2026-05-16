@@ -7,9 +7,8 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 use tokio_rustls::TlsAcceptor;
 
-use crate::tls::StreamType;
-
 mod database;
+mod email_auth;
 mod imap;
 mod imap_op;
 mod parsing;

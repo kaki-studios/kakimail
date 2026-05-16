@@ -2,9 +2,9 @@ use std::str::FromStr;
 
 use nom::{
     branch::alt,
-    bytes::complete::{is_not, tag, take_until, take_while},
+    bytes::complete::{tag, take_until, take_while},
     character::complete::{alpha1, char, digit1},
-    combinator::{map, map_res, opt, rest},
+    combinator::{map_res, opt, rest},
     multi::{separated_list0, separated_list1},
     sequence::{delimited, preceded, separated_pair, tuple},
     IResult,
@@ -31,31 +31,44 @@ pub fn number(i: &str) -> IResult<&str, u32> {
 
 //`HELLO WORLD "QUOTED ELEMENT"` -> ["HELLO", "WORLD", "QUOTED ELEMENT"]
 pub fn parse_list(list: &str) -> Result<Vec<String>, nom::Err<nom::error::Error<&str>>> {
-    let mut iterator = list.split_whitespace();
-    let mut new_vec = Vec::new();
-    while let Some(elem) = iterator.next() {
-        if elem.starts_with('"') {
-            let (stripped, _) = char('"')(elem)?;
-            let mut start = stripped.to_string();
-            while let Some(string) = iterator.next() {
-                if string.ends_with('"') {
-                    // let (_, s) = take_until("\"")(string)?;
-                    let s = string.strip_suffix("\"").ok_or(nom::Err::Error(
-                        nom::error::Error::new(string, nom::error::ErrorKind::Fail),
-                    ))?;
-                    //clunky
-                    start.extend(" ".chars());
-                    start.extend(s.chars());
-                    break;
+    let mut items = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = false;
+    let mut escaped = false;
+
+    for c in list.trim_end_matches("\r\n").chars() {
+        if escaped {
+            current.push(c);
+            escaped = false;
+            continue;
+        }
+
+        match c {
+            '\\' if in_quotes => escaped = true,
+            '"' => in_quotes = !in_quotes,
+            c if c.is_whitespace() && !in_quotes => {
+                if !current.is_empty() {
+                    items.push(std::mem::take(&mut current));
                 }
-                start.extend(string.chars());
             }
-            new_vec.push(start)
-        } else {
-            new_vec.push(elem.to_string())
+            _ => current.push(c),
         }
     }
-    Ok(new_vec)
+
+    if in_quotes {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            list,
+            nom::error::ErrorKind::Fail,
+        )));
+    }
+    if !current.is_empty() {
+        items.push(current);
+    }
+    Ok(items)
+}
+
+pub fn quote_string(input: &str) -> String {
+    format!("\"{}\"", input.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 ///parses the search command
@@ -204,33 +217,100 @@ pub fn fetch(
         ))),
     }
 }
-pub fn fetch_args(mut args: &str) -> IResult<&str, Vec<FetchArgs>> {
-    let lowercase = args.to_lowercase();
-
-    //TODO: \r\n is bad here
-    match lowercase.as_ref() {
-        "all\r\n" => {
-            args = "(FLAGS INTERNALDATE RFC822.SIZE ENVELOPE)\r\n";
-        }
-        "fast\r\n" => {
-            args = "(FLAGS INTERNALDATE RFC822.SIZE)\r\n";
-        }
-        "full\r\n" => {
-            args = "(FLAGS INTERNALDATE RFC822.SIZE ENVELOPE BODY)\r\n";
-        }
-        _ => {}
+pub fn fetch_args(args: &str) -> IResult<&str, Vec<FetchArgs>> {
+    let trimmed = args.trim_end_matches("\r\n").trim();
+    let expanded = match trimmed.to_ascii_lowercase().as_str() {
+        "all" => "FLAGS INTERNALDATE RFC822.SIZE ENVELOPE".to_string(),
+        "fast" => "FLAGS INTERNALDATE RFC822.SIZE".to_string(),
+        "full" => "FLAGS INTERNALDATE RFC822.SIZE ENVELOPE BODY".to_string(),
+        _ => trimmed
+            .strip_prefix('(')
+            .and_then(|s| s.strip_suffix(')'))
+            .unwrap_or(trimmed)
+            .to_string(),
     };
-    let mut parser = delimited(
-        opt(tag::<&str, &str, nom::error::Error<&str>>("(")),
-        separated_list0(char(' '), FetchArgs::from_str),
-        opt(tag(")")),
-    );
-    let result = parser(args)?;
 
-    Ok(result)
+    let mut result = Vec::new();
+    for token in split_fetch_attributes(&expanded)
+        .map_err(|_| nom::Err::Error(nom::error::Error::new(args, nom::error::ErrorKind::Fail)))?
+    {
+        let (rest, attr) = FetchArgs::from_str(&token).map_err(|_| {
+            nom::Err::Error(nom::error::Error::new(args, nom::error::ErrorKind::Fail))
+        })?;
+        if !rest.trim().is_empty() {
+            return Err(nom::Err::Error(nom::error::Error::new(
+                args,
+                nom::error::ErrorKind::Fail,
+            )));
+        }
+        result.push(attr);
+    }
+
+    Ok(("", result))
 }
 
-#[derive(Debug)]
+fn split_fetch_attributes(input: &str) -> Result<Vec<String>, ()> {
+    let mut attrs = Vec::new();
+    let mut current = String::new();
+    let mut bracket_depth = 0i32;
+    let mut paren_depth = 0i32;
+    let mut in_quotes = false;
+    let mut escaped = false;
+
+    for c in input.chars() {
+        if escaped {
+            current.push(c);
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' if in_quotes => {
+                current.push(c);
+                escaped = true;
+            }
+            '"' => {
+                in_quotes = !in_quotes;
+                current.push(c);
+            }
+            '[' if !in_quotes => {
+                bracket_depth += 1;
+                current.push(c);
+            }
+            ']' if !in_quotes => {
+                bracket_depth -= 1;
+                current.push(c);
+            }
+            '(' if !in_quotes && bracket_depth == 0 => {
+                paren_depth += 1;
+                current.push(c);
+            }
+            ')' if !in_quotes && bracket_depth == 0 => {
+                paren_depth -= 1;
+                current.push(c);
+            }
+            c if c.is_whitespace() && !in_quotes && bracket_depth == 0 && paren_depth == 0 => {
+                if !current.trim().is_empty() {
+                    attrs.push(current.trim().to_string());
+                    current.clear();
+                }
+            }
+            _ => current.push(c),
+        }
+        if bracket_depth < 0 || paren_depth < 0 {
+            return Err(());
+        }
+    }
+
+    if in_quotes || bracket_depth != 0 || paren_depth != 0 {
+        return Err(());
+    }
+    if !current.trim().is_empty() {
+        attrs.push(current.trim().to_string());
+    }
+    Ok(attrs)
+}
+
+#[derive(Debug, Clone)]
 pub enum FetchArgs {
     Binary(Vec<i32>, Option<(i32, i32)>),
     BinaryPeek(Vec<i32>, Option<(i32, i32)>),
@@ -242,7 +322,10 @@ pub enum FetchArgs {
     Envelope,
     Flags,
     InternalDate,
+    RFC822,
+    RFC822Header,
     RFC822Size,
+    RFC822Text,
     Uid,
 }
 
@@ -283,7 +366,11 @@ impl FetchArgs {
                 let (rest, list) = section_binary_parser(arg_rest)?;
                 (rest, FetchArgs::BinarySize(list))
             }
-            "body" if arg_rest.starts_with(" ") || arg_rest.starts_with(")") => {
+            "body"
+                if arg_rest.is_empty()
+                    || arg_rest.starts_with(" ")
+                    || arg_rest.starts_with(")") =>
+            {
                 (arg_rest, FetchArgs::BodyNoArgs)
             }
             x if x == "body" || x == "body.peek" => {
@@ -302,7 +389,10 @@ impl FetchArgs {
             "envelope" => (arg_rest, FetchArgs::Envelope),
             "flags" => (arg_rest, FetchArgs::Flags),
             "internaldate" => (arg_rest, FetchArgs::InternalDate),
+            "rfc822" => (arg_rest, FetchArgs::RFC822),
+            "rfc822.header" => (arg_rest, FetchArgs::RFC822Header),
             "rfc822.size" => (arg_rest, FetchArgs::RFC822Size),
+            "rfc822.text" => (arg_rest, FetchArgs::RFC822Text),
             "uid" => (arg_rest, FetchArgs::Uid),
 
             _ => {
@@ -319,7 +409,7 @@ impl FetchArgs {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SectionSpec {
     MsgText(SectionMsgText),
     Other(Vec<i32>, Option<SectionText>),
@@ -352,7 +442,7 @@ impl SectionSpec {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SectionText {
     Mime,
     MsgText(SectionMsgText),
@@ -360,8 +450,8 @@ pub enum SectionText {
 
 impl SectionText {
     pub fn from_str(s: &str) -> IResult<&str, Self> {
-        if let Ok(x) = tag::<&str, &str, nom::error::Error<&str>>("MIME")(s) {
-            Ok((x.0, SectionText::Mime))
+        if s.to_ascii_uppercase().starts_with("MIME") {
+            Ok((&s["MIME".len()..], SectionText::Mime))
         } else {
             let (rest, msgtext) = SectionMsgText::from_str(s)?;
             Ok((rest, SectionText::MsgText(msgtext)))
@@ -369,7 +459,7 @@ impl SectionText {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum SectionMsgText {
     Header,
     HeaderFields(Vec<String>),
@@ -379,38 +469,54 @@ pub enum SectionMsgText {
 
 impl SectionMsgText {
     pub fn from_str(input: &str) -> IResult<&str, Self> {
-        // dbg!(&input);
-        let text = tag::<&str, &str, nom::error::Error<&str>>("TEXT")(input);
-        if let Ok(x) = text {
-            return Ok((x.0, SectionMsgText::Text));
+        let upper = input.to_ascii_uppercase();
+        if upper.starts_with("TEXT") {
+            return Ok((&input["TEXT".len()..], SectionMsgText::Text));
         }
-        let rest_parser = delimited(
-            char::<&str, nom::error::Error<&str>>('('),
-            separated_list1(char(' '), map(alpha1, str::to_string)),
-            char(')'),
-        );
-        let mut pair_parser = nom::sequence::separated_pair(is_not(" "), char(' '), rest_parser);
-        match pair_parser(input) {
-            Ok((rest, (start, nums_str))) => {
-                if start.contains("NOT") {
-                    Ok((rest, SectionMsgText::HeaderFieldsNot(nums_str)))
+
+        for (prefix, not) in [("HEADER.FIELDS.NOT", true), ("HEADER.FIELDS", false)] {
+            if upper.starts_with(prefix) {
+                let after_prefix = &input[prefix.len()..];
+                let rest = after_prefix.trim_start();
+                let Some(rest) = rest.strip_prefix('(') else {
+                    return Err(nom::Err::Error(nom::error::Error::new(
+                        input,
+                        nom::error::ErrorKind::Fail,
+                    )));
+                };
+                let Some(end_idx) = rest.find(')') else {
+                    return Err(nom::Err::Error(nom::error::Error::new(
+                        input,
+                        nom::error::ErrorKind::Fail,
+                    )));
+                };
+                let fields = rest[..end_idx]
+                    .split_whitespace()
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
+                let parser_rest = &rest[end_idx + 1..];
+                return if not {
+                    Ok((parser_rest, SectionMsgText::HeaderFieldsNot(fields)))
                 } else {
-                    Ok((rest, SectionMsgText::HeaderFields(nums_str)))
-                }
-            }
-            Err(_) => {
-                let header = tag::<&str, &str, nom::error::Error<&str>>("HEADER")(input)?;
-                return Ok((header.0, SectionMsgText::Header));
+                    Ok((parser_rest, SectionMsgText::HeaderFields(fields)))
+                };
             }
         }
+
+        if upper.starts_with("HEADER") {
+            return Ok((&input["HEADER".len()..], SectionMsgText::Header));
+        }
+
+        Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        )))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::str::FromStr;
-
-    use chrono::DateTime;
 
     use crate::{
         imap_op::{
@@ -456,7 +562,6 @@ mod tests {
             "RETURN (MIN MAX) UNSEEN BCC test TEXT \"some text\" SENTON 02-Oct-2020 2,3,7:10,15:*",
         )
         .unwrap();
-        dbg!(&s);
         // let x = s.search_keys.iter().fold(String::new(), |mut acc, i| {
         //     let j = i.to_sql_arg();
         //     dbg!(&j);

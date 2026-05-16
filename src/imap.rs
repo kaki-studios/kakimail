@@ -107,10 +107,6 @@ impl IMAP {
             .split_once(" ")
             .unwrap_or(rest.split_once("\r\n").context("didn't provide command")?);
 
-        //TODO
-        //-implement the uid command
-        //2. add extra `uid.rs` file like the other commands, and
-        //make a base function for commands that can have uid
         let (resp, new_state, info) = exec_command(command, tag, &args, state, db.clone()).await?;
         for item in &resp {
             if let Result::Ok(x) = String::from_utf8(item.to_vec()) {
@@ -245,13 +241,17 @@ async fn exec_command(
     match command.to_lowercase().as_str() {
         "append" => Ok(imap_op::append::Append::process(tag, args, state, db).await?),
         "capability" => Ok(imap_op::capability::Capability::process(tag, args, state, db).await?),
+        "check" => Ok(imap_op::noop::Noop::process(tag, args, state, db).await?),
+        "copy" => Ok(imap_op::copy::Copy::process(tag, args, state, db).await?),
         "create" => Ok(imap_op::create::Create::process(tag, args, state, db).await?),
         "enable" => Ok(imap_op::enable::Enable::process(tag, args, state, db).await?),
         "expunge" => Ok(imap_op::expunge::Expunge::process(tag, args, state, db).await?),
         "login" => Ok(imap_op::login::Login::process(tag, args, state, db).await?),
+        "move" => Ok(imap_op::move_op::Move::process(tag, args, state, db).await?),
         "noop" => Ok(imap_op::noop::Noop::process(tag, args, state, db).await?),
         "select" => Ok(imap_op::select::Select::process(tag, args, state, db).await?),
         "status" => Ok(imap_op::status::Status::process(tag, args, state, db).await?),
+        "store" => Ok(imap_op::store::Store::process(tag, args, state, db).await?),
         "unselect" => Ok(imap_op::unselect::Unselect::process(tag, args, state, db).await?),
         "authenticate" => {
             Ok(imap_op::authenticate::Authenticate::process(tag, args, state, db).await?)

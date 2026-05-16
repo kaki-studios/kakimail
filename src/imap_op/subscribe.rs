@@ -30,9 +30,10 @@ pub(super) async fn subscribe_or_unsubsribe(
     crate::imap::IMAPState,
     crate::imap::ResponseInfo,
 )> {
-    let mut msg = args.split_whitespace();
-    let IMAPState::Authed(id) = state else {
-        return Err(anyhow!("bad state"));
+    let id = match state {
+        IMAPState::Authed(id) => id,
+        IMAPState::Selected(selected) => selected.user_id,
+        _ => return Err(anyhow!("bad state")),
     };
     let resp = if subscribe {
         format!("{} OK SUBSCRIBE completed\r\n", tag)
@@ -41,7 +42,9 @@ pub(super) async fn subscribe_or_unsubsribe(
     };
     let db = db.lock().await;
 
-    let mailbox_name = msg.next().context("should provide mailbox name")?;
+    let parsed = crate::parsing::imap::parse_list(args)
+        .map_err(|e| anyhow!("invalid SUBSCRIBE args: {:?}", e))?;
+    let mailbox_name = parsed.first().context("should provide mailbox name")?;
     let mailbox_id = db.get_mailbox_id(id, mailbox_name).await?;
     db.change_mailbox_subscribed(mailbox_id, subscribe).await?;
     Ok((vec![resp.as_bytes().to_vec()], state, ResponseInfo::Regular))
