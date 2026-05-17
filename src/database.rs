@@ -79,7 +79,7 @@ impl DBClient {
             value
         } else {
             tracing::warn!(
-                "SQLITE_URL not set, using a default local database: ./data/kakimail/.db"
+                "SQLITE_URL not set, using a default local database: ./data/kakimail.db"
             );
             "./data/kakimail.db".to_string()
         };
@@ -89,7 +89,8 @@ impl DBClient {
         unsafe {
             let _guard = LoadExtensionGuard::new(&db)?;
             //NOTE: need to have sqlite3-pcre installed
-            db.load_extension("/usr/lib/sqlite3/pcre.so", None)?;
+            // db.load_extension("/usr/lib/sqlite3/pcre.so", None)?;
+            db.load_extension("/usr/lib/libsqlite3-pcre.so", None)?;
         }
 
         db.create_scalar_function(

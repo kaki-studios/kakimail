@@ -40,7 +40,7 @@ async fn main() -> Result<()> {
     let client = reqwest::Client::new();
     let mut resp = client
         .post(format!(
-            "https://porkbun.com/api/json/v3/ssl/retrieve/{}",
+            "https://api.porkbun.com/api/json/v3/ssl/retrieve/{}",
             domain_stripped
         ))
         .body(format!(
